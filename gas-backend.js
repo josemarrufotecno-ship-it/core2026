@@ -23,7 +23,7 @@
 
 // ─── ID del Google Sheet ──────────────────────────────────────────
 // ID real de la hoja de cálculo del torneo CORE 2026
-const SS_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms";
+const SS_ID = "1rycHuZV27WV_aoFaE40PYgEUipM_8Gbh8RMDd5LFkw0";
 
 // FIX: Helper en lugar de variable global para evitar error al cargar
 // SpreadsheetApp.openById() solo es válido dentro de una función GAS

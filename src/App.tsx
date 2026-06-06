@@ -18,7 +18,7 @@ import { useState, useEffect, useContext, createContext, useCallback, useRef } f
 // FIX #1: API_URL desde variable de entorno (no hardcodeada)
 // En .env local: VITE_GAS_URL=https://script.google.com/macros/s/…/exec
 // En Vercel: Environment Variable VITE_GAS_URL con la misma URL
-const API_URL: string = import.meta.env.VITE_GAS_URL as string || "";
+const API_URL: string = import.meta.env.VITE_GAS_URL as string || "https://script.google.com/macros/s/AKfycbwD2vy4w3F3dGxdlsj5U3eE36S1Q2vDZVBQWVy6Fz12PM6mSLnyoeCxvP_Q1sw1GZCRaA/exec";
 
 const C = {
   purple: "#CC67FE", blue: "#0474FD", orange: "#FF5500", green: "#84CD05",
@@ -56,6 +56,7 @@ const JUECES_AUTORIZADOS: Record<string, JuezInfo> = {
   "1007": { nombre: "Xioleidy Colmenarez",  rol: "juez"  },
   "1008": { nombre: "Mariangela Moreno",    rol: "juez"  },
   "1009": { nombre: "Mariangel Rojas",      rol: "juez"  },
+  "8888": { nombre: "Nuevo Admin",          rol: "admin" },
   "9999": { nombre: "Admin Master",         rol: "admin" },
 };
 
@@ -575,7 +576,7 @@ function PublicLeaderboard({ data }: { data: AppData }) {
 // ═══════════════════════════════════════════════════════════════════
 function DashboardLayout() {
   const { user, logout } = useAuth();
-  const { submitScore, qualify: qualifyAPI, isLoading: apiLoading, error: apiError, setError: setApiError } = useSheetsAPI();
+  const { submitScore, qualify: qualifyAPI, fetchLeaderboard, isLoading: apiLoading, error: apiError, setError: setApiError } = useSheetsAPI();
   const [data, setData] = useState<AppData | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"dashboard" | "phase" | "score">("dashboard");
@@ -591,10 +592,33 @@ function DashboardLayout() {
   const load = useCallback(async () => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      setData(raw ? JSON.parse(raw) as AppData : defaultData());
+      let localData = raw ? JSON.parse(raw) as AppData : defaultData();
+      
+      // Sincronización en tiempo real: obtener datos del servidor y mezclarlos con datos locales
+      if (API_URL) {
+        const serverLeaderboard = await fetchLeaderboard() as any[];
+        if (serverLeaderboard && serverLeaderboard.length > 0) {
+           let updated = false;
+           // Fusionar los puntajes del servidor en nuestro estado local
+           // Esto es una simplificación, asume que el servidor tiene datos f2, f3, f4
+           // Para la sincronización completa bidireccional, deberías usar Firebase o WebSockets
+           serverLeaderboard.forEach(serverTeam => {
+             const { id, f2, f3, f4, tb2, tb3, tb4 } = serverTeam;
+             if (f2 > 0 && !localData.scores[`2_${id}`]) { localData.scores[`2_${id}`] = { timing: String(f2), tiebreak: tb2 }; updated = true; }
+             if (f3 > 0 && !localData.scores[`3_${id}`]) { localData.scores[`3_${id}`] = { trace1: String(f3), tiebreak: tb3 }; updated = true; }
+             if (f4 > 0 && !localData.scores[`4_${id}`]) { localData.scores[`4_${id}`] = { obj1: String(f4), tiebreak: tb4 }; updated = true; }
+           });
+           
+           if (updated) {
+             localStorage.setItem(STORAGE_KEY, JSON.stringify(localData));
+           }
+        }
+      }
+      
+      setData(localData);
     } catch { setData(defaultData()); }
     setLoading(false);
-  }, []);
+  }, [fetchLeaderboard]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {

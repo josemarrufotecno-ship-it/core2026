@@ -1,38 +1,65 @@
 // ═══════════════════════════════════════════════════════════════════
 // CORE 2026 — Backend Google Apps Script
-// Desplegar como: Web App → Ejecutar como: "Yo" → Acceso: "Cualquiera"
+//
+// INSTRUCCIONES DE DESPLIEGUE:
+//  1. Abre Google Sheets → Extensiones → Apps Script
+//  2. Pega TODO este código (reemplaza el contenido existente)
+//  3. Clic en "Implementar" → "Nueva implementación"
+//  4. Tipo: Aplicación Web
+//  5. Ejecutar como: Yo (tu cuenta de Google)
+//  6. Quién tiene acceso: Cualquier usuario
+//  7. Clic en "Implementar" → copia la URL resultante
+//  8. Pon esa URL en la variable VITE_GAS_URL del .env y en Vercel
+//
+//  PRIMERA VEZ: Ejecutar manualmente la función setupSpreadsheet()
+//  desde el editor de Apps Script para crear la estructura de hojas.
+//
+// CAMBIOS APLICADOS:
+//  FIX: SpreadsheetApp.openById() ya NO está en el nivel global.
+//       Antes fallaba al cargar si el ID no estaba configurado.
+//       Ahora se llama dentro de cada función que lo necesita,
+//       usando la función helper getSpreadsheet().
 // ═══════════════════════════════════════════════════════════════════
 
-const SS_ID = "TU_ID_AQUI"; // ← Pega aquí el ID de tu Google Sheet
-const SPREADSHEET = SpreadsheetApp.openById(SS_ID);
+// ─── ID del Google Sheet ──────────────────────────────────────────
+// ID real de la hoja de cálculo del torneo CORE 2026
+const SS_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms";
 
-// ─── Estructura de hojas ───────────────────────────────────────────
+// FIX: Helper en lugar de variable global para evitar error al cargar
+// SpreadsheetApp.openById() solo es válido dentro de una función GAS
+function getSpreadsheet() {
+  return SpreadsheetApp.openById(SS_ID);
+}
+
+// ─── Estructura de hojas ──────────────────────────────────────────
 // Usuarios       → A:PIN | B:Nombre | C:Rol
 // Fase_1         → A:EquipoID | B:NombreEquipo | C:Tiempo | D:Juez | E:Timestamp
 // Fase_2         → A:EquipoID | B:NombreEquipo | C:Precision | D:Parking | E:Timing | F:Tiebreak | G:Total | H:Juez | I:Timestamp
 // Fase_3         → A:EquipoID | B:NombreEquipo | C:Trace1 | D:Trace2 | E:Trace3 | F:Tiebreak | G:Total | H:Juez | I:Timestamp
 // Fase_4         → A:EquipoID | B:NombreEquipo | C:Obj1 | D:Obj2 | E:Obj3 | F:Tiebreak | G:Total | H:Juez | I:Timestamp
-// Clasificados   → A:Fase | B:EquipoIDs (JSON array)
+// Clasificados   → A:Fase | B:EquipoIDs (JSON array) | C:Timestamp
 // Reporte_Final  → Calculada automáticamente desde las fases
 
 // ─── CORS Helper ──────────────────────────────────────────────────
 // Sin esto, el fetch desde React falla. Esto es lo que reemplaza 'no-cors'.
+// Al desplegar como "Cualquiera", GAS maneja CORS automáticamente en doGet/doPost.
 function corsResponse(data) {
-  const output = ContentService
+  return ContentService
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
-  // ContentService no permite setear headers custom directamente,
-  // pero al desplegar como "Cualquiera" con doGet/doPost, GAS maneja CORS.
-  // Para orígenes específicos, usa HtmlService + appendUntrusted si necesitas mayor control.
-  return output;
 }
 
-// ─── Tokens de sesión en memoria (PropertiesService) ─────────────
+// ─── Tokens de sesión en PropertiesService ────────────────────────
 function generateToken(pin) {
   const token = Utilities.getUuid();
   const props = PropertiesService.getScriptProperties();
   const sessions = JSON.parse(props.getProperty("sessions") || "{}");
   sessions[token] = { pin, ts: Date.now() };
+  // Limpiar tokens expirados (> 12h) para no acumular
+  const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+  Object.keys(sessions).forEach(k => {
+    if (sessions[k].ts < cutoff) delete sessions[k];
+  });
   props.setProperty("sessions", JSON.stringify(sessions));
   return token;
 }
@@ -48,7 +75,7 @@ function validateToken(token) {
   return session;
 }
 
-// ─── doGet — Lectura pública (Leaderboard) ────────────────────────
+// ─── doGet — Lectura pública (Leaderboard sin auth) ──────────────
 function doGet(e) {
   try {
     const action = e?.parameter?.action || "GET_LEADERBOARD";
@@ -57,30 +84,38 @@ function doGet(e) {
     }
     return corsResponse({ status: "error", message: "Acción no reconocida" });
   } catch (err) {
+    console.error("doGet error:", err.message);
     return corsResponse({ status: "error", message: err.message });
   }
 }
 
-// ─── doPost — Escritura autenticada ───────────────────────────────
+// ─── doPost — Escritura autenticada ──────────────────────────────
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
     const { action } = payload;
 
-    // LOGIN no requiere token
+    // LOGIN no requiere token previo
     if (action === "LOGIN") return corsResponse(handleLogin(payload));
 
     // Todo lo demás requiere token válido
     const session = validateToken(payload.token);
     if (!session) {
-      return corsResponse({ status: "error", message: "Sesión inválida o expirada. Vuelve a iniciar sesión." });
+      return corsResponse({
+        status: "error",
+        message: "Sesión inválida o expirada. Vuelve a iniciar sesión."
+      });
     }
 
     switch (action) {
-      case "SUBMIT_SCORE":   return corsResponse(handleSubmitScore(payload, session));
-      case "SET_QUALIFIED":  return corsResponse(handleSetQualified(payload, session));
-      case "GET_LEADERBOARD": return corsResponse({ status: "ok", leaderboard: buildLeaderboard() });
-      default:               return corsResponse({ status: "error", message: `Acción desconocida: ${action}` });
+      case "SUBMIT_SCORE":
+        return corsResponse(handleSubmitScore(payload, session));
+      case "SET_QUALIFIED":
+        return corsResponse(handleSetQualified(payload, session));
+      case "GET_LEADERBOARD":
+        return corsResponse({ status: "ok", leaderboard: buildLeaderboard() });
+      default:
+        return corsResponse({ status: "error", message: `Acción desconocida: ${action}` });
     }
   } catch (err) {
     console.error("doPost error:", err.message, err.stack);
@@ -94,15 +129,16 @@ function doPost(e) {
 function handleLogin({ pin }) {
   if (!pin) return { status: "error", message: "PIN requerido" };
 
-  const sheet = SPREADSHEET.getSheetByName("Usuarios");
-  if (!sheet) return { status: "error", message: "Hoja 'Usuarios' no encontrada" };
+  // FIX: usar getSpreadsheet() en lugar de SPREADSHEET global
+  const sheet = getSpreadsheet().getSheetByName("Usuarios");
+  if (!sheet) return { status: "error", message: "Hoja 'Usuarios' no encontrada. Ejecuta setupSpreadsheet() primero." };
 
   const data = sheet.getDataRange().getValues();
   // Buscar desde fila 2 (fila 1 = headers)
   for (let i = 1; i < data.length; i++) {
-    const rowPin   = String(data[i][0]).trim();
-    const nombre   = String(data[i][1]).trim();
-    const rol      = String(data[i][2]).trim().toLowerCase();
+    const rowPin = String(data[i][0]).trim();
+    const nombre = String(data[i][1]).trim();
+    const rol    = String(data[i][2]).trim().toLowerCase();
     if (rowPin === String(pin).trim()) {
       const token = generateToken(pin);
       return { status: "ok", nombre, rol, token };
@@ -113,7 +149,7 @@ function handleLogin({ pin }) {
 
 // ═══════════════════════════════════════════════════════════════════
 // HANDLER: SUBMIT SCORE
-// LockService previene colisiones concurrentes
+// LockService previene colisiones concurrentes (múltiples jueces)
 // ═══════════════════════════════════════════════════════════════════
 function handleSubmitScore(payload, session) {
   const { fase, equipoId, juez, timestamp } = payload;
@@ -129,13 +165,14 @@ function handleSubmitScore(payload, session) {
   }
 
   const sheetName = `Fase_${fase}`;
-  const sheet = SPREADSHEET.getSheetByName(sheetName);
+  // FIX: usar getSpreadsheet() en lugar de SPREADSHEET global
+  const sheet = getSpreadsheet().getSheetByName(sheetName);
   if (!sheet) return { status: "error", message: `Hoja '${sheetName}' no encontrada` };
 
-  // ── LockService: previene escrituras simultáneas ──────────────
+  // ── LockService: previene escrituras simultáneas ───────────────
   const lock = LockService.getScriptLock();
   try {
-    lock.waitLock(10000); // Esperar hasta 10 segundos por el lock
+    lock.waitLock(10000); // Esperar hasta 10 segundos
   } catch (e) {
     return { status: "error", message: "El sistema está ocupado. Intenta en 5 segundos." };
   }
@@ -144,11 +181,11 @@ function handleSubmitScore(payload, session) {
     const team = getTeamName(equipoId);
     const data = sheet.getDataRange().getValues();
 
-    // Buscar fila existente del equipo
+    // Buscar fila existente del equipo (para actualizar, no duplicar)
     let targetRow = -1;
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]) === String(equipoId)) {
-        targetRow = i + 1; // +1 porque getValues es 0-indexed, Sheets es 1-indexed
+        targetRow = i + 1; // +1: getValues es 0-indexed, Sheets es 1-indexed
         break;
       }
     }
@@ -156,14 +193,12 @@ function handleSubmitScore(payload, session) {
     const rowData = buildRowData(fase, equipoId, team, payload, juez, timestamp);
 
     if (targetRow > 0) {
-      // Actualizar fila existente
       sheet.getRange(targetRow, 1, 1, rowData.length).setValues([rowData]);
     } else {
-      // Insertar nueva fila
       sheet.appendRow(rowData);
     }
 
-    // Actualizar Reporte_Final
+    // Actualizar el reporte consolidado
     updateReporteFinal();
 
     return { status: "ok", message: "Puntaje guardado correctamente", equipoId, fase };
@@ -182,26 +217,41 @@ function buildRowData(fase, equipoId, teamName, payload, juez, timestamp) {
 
     case 2: {
       const total = (parseFloat(payload.precision || 0) +
-                     parseFloat(payload.parking || 0) +
-                     parseFloat(payload.timing || 0));
-      return [equipoId, teamName, payload.precision, payload.parking, payload.timing,
-              payload.tiebreak || "", Math.round(total * 100) / 100, juez, ts];
+                     parseFloat(payload.parking   || 0) +
+                     parseFloat(payload.timing     || 0));
+      return [
+        equipoId, teamName,
+        payload.precision, payload.parking, payload.timing,
+        payload.tiebreak || "",
+        Math.round(total * 100) / 100,
+        juez, ts
+      ];
     }
 
     case 3: {
       const total = (parseFloat(payload.trace1 || 0) +
                      parseFloat(payload.trace2 || 0) +
                      parseFloat(payload.trace3 || 0));
-      return [equipoId, teamName, payload.trace1, payload.trace2, payload.trace3,
-              payload.tiebreak || "", Math.round(total * 100) / 100, juez, ts];
+      return [
+        equipoId, teamName,
+        payload.trace1, payload.trace2, payload.trace3,
+        payload.tiebreak || "",
+        Math.round(total * 100) / 100,
+        juez, ts
+      ];
     }
 
     case 4: {
       const total = (parseFloat(payload.obj1 || 0) +
                      parseFloat(payload.obj2 || 0) +
                      parseFloat(payload.obj3 || 0));
-      return [equipoId, teamName, payload.obj1, payload.obj2, payload.obj3,
-              payload.tiebreak || "", Math.round(total * 100) / 100, juez, ts];
+      return [
+        equipoId, teamName,
+        payload.obj1, payload.obj2, payload.obj3,
+        payload.tiebreak || "",
+        Math.round(total * 100) / 100,
+        juez, ts
+      ];
     }
 
     default:
@@ -221,8 +271,9 @@ function handleSetQualified(payload, session) {
   const { fase, teamIds } = payload;
   if (!fase || !teamIds) return { status: "error", message: "Faltan fase o teamIds" };
 
-  const sheet = SPREADSHEET.getSheetByName("Clasificados") ||
-                SPREADSHEET.insertSheet("Clasificados");
+  // FIX: usar getSpreadsheet() en lugar de SPREADSHEET global
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName("Clasificados") || ss.insertSheet("Clasificados");
 
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); } catch (e) { return { status: "error", message: "Sistema ocupado" }; }
@@ -250,8 +301,11 @@ function handleSetQualified(payload, session) {
 // ═══════════════════════════════════════════════════════════════════
 function buildLeaderboard() {
   const result = {};
+  // FIX: usar getSpreadsheet() en lugar de SPREADSHEET global
+  const ss = getSpreadsheet();
+
   [2, 3, 4].forEach(fase => {
-    const sheet = SPREADSHEET.getSheetByName(`Fase_${fase}`);
+    const sheet = ss.getSheetByName(`Fase_${fase}`);
     if (!sheet) return;
     const rows = sheet.getDataRange().getValues();
     rows.slice(1).forEach(row => {
@@ -259,6 +313,7 @@ function buildLeaderboard() {
       const name  = String(row[1]);
       const total = parseFloat(row[6]) || 0; // columna G = Total
       const tb    = parseFloat(row[5]) || 0; // columna F = Tiebreak
+      if (!id || id === "EquipoID") return; // Saltar headers si accidentalmente se leen
       if (!result[id]) result[id] = { id, name, f2: 0, f3: 0, f4: 0, tb2: 0, tb3: 0, tb4: 0 };
       result[id][`f${fase}`] = total;
       result[id][`tb${fase}`] = tb;
@@ -274,8 +329,10 @@ function buildLeaderboard() {
 function updateReporteFinal() {
   try {
     const lb = buildLeaderboard();
-    let sheet = SPREADSHEET.getSheetByName("Reporte_Final");
-    if (!sheet) sheet = SPREADSHEET.insertSheet("Reporte_Final");
+    // FIX: usar getSpreadsheet() en lugar de SPREADSHEET global
+    const ss = getSpreadsheet();
+    let sheet = ss.getSheetByName("Reporte_Final");
+    if (!sheet) sheet = ss.insertSheet("Reporte_Final");
 
     sheet.clearContents();
     sheet.appendRow(["Posición", "EquipoID", "Nombre", "F2", "F3", "F4", "Total", "Actualizado"]);
@@ -289,7 +346,8 @@ function updateReporteFinal() {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 function getUserRole(pin) {
-  const sheet = SPREADSHEET.getSheetByName("Usuarios");
+  // FIX: usar getSpreadsheet() en lugar de SPREADSHEET global
+  const sheet = getSpreadsheet().getSheetByName("Usuarios");
   if (!sheet) return null;
   const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
@@ -301,15 +359,18 @@ function getUserRole(pin) {
 }
 
 function getTeamName(equipoId) {
-  // Puedes crear una hoja "Equipos" o derivar el nombre del ID
   return `Equipo ${String(equipoId).padStart(2, "0")}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // SETUP: Crea la estructura inicial de la hoja de cálculo
-// Ejecutar manualmente UNA VEZ después de desplegar
+// ─────────────────────────────────────────────────────────────────
+// INSTRUCCIÓN: Ejecutar MANUALMENTE desde Apps Script UNA SOLA VEZ
+// después de desplegar. Menú: Ejecutar → setupSpreadsheet
 // ═══════════════════════════════════════════════════════════════════
 function setupSpreadsheet() {
+  const ss = getSpreadsheet(); // FIX: usar helper en lugar de global
+
   const headers = {
     "Usuarios":       ["PIN", "Nombre", "Rol"],
     "Fase_1":         ["EquipoID", "Nombre", "Tiempo", "Juez", "Timestamp"],
@@ -321,16 +382,19 @@ function setupSpreadsheet() {
   };
 
   Object.entries(headers).forEach(([name, cols]) => {
-    let sheet = SPREADSHEET.getSheetByName(name);
-    if (!sheet) sheet = SPREADSHEET.insertSheet(name);
-    sheet.getRange(1, 1, 1, cols.length).setValues([cols])
-         .setFontWeight("bold")
-         .setBackground("#1A1A2E")
-         .setFontColor("#FFFFFF");
+    let sheet = ss.getSheetByName(name);
+    if (!sheet) sheet = ss.insertSheet(name);
+    // Limpiar y escribir headers con estilo
+    sheet.clearContents();
+    sheet.getRange(1, 1, 1, cols.length)
+      .setValues([cols])
+      .setFontWeight("bold")
+      .setBackground("#1A1A2E")
+      .setFontColor("#FFFFFF");
   });
 
-  // Poblar jueces iniciales
-  const usuarios = SPREADSHEET.getSheetByName("Usuarios");
+  // Poblar jueces iniciales en la hoja Usuarios
+  const usuarios = ss.getSheetByName("Usuarios");
   const jueces = [
     ["1001", "Alexis Cáceres",      "juez"],
     ["1002", "Abril Urdaneta",      "juez"],
@@ -346,5 +410,6 @@ function setupSpreadsheet() {
   jueces.forEach(row => usuarios.appendRow(row));
 
   SpreadsheetApp.flush();
-  Logger.log("✅ Estructura creada exitosamente. Despliega el script como Web App.");
+  Logger.log("✅ Estructura creada exitosamente en la hoja: " + SS_ID);
+  Logger.log("✅ Jueces poblados. Ahora despliega el script como Web App.");
 }

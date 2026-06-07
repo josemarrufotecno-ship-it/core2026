@@ -37,4 +37,4 @@ Este documento resume el estado actual del proyecto "CORE 2026", la arquitectura
 4. **Permisos de la Hoja:** Asegurarse de que el script en Apps Script tiene permisos para leer la hoja y que se implementó para ejecutarse como el Propietario (Owner) permitiendo acceso a "Cualquier usuario" (Anyone).
 
 ---
-*Archivo generado para facilitar el paso de contexto a otras herramientas de IA.*
+*Archivo generado para facilitar el paso de contexto a otras herramientas de IA.*   Clave BD 2o1rBnNiEvfWdvaV

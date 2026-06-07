@@ -1,24 +1,19 @@
 // ═══════════════════════════════════════════════════════════════════
-// CORE 2026 — Sistema de Arbitraje Completo
-// Incluye: AuthContext, useSheetsAPI, DashboardLayout, App
-// Backend: Google Apps Script (ver gas-backend.js en la raíz del proyecto)
-//
-// CAMBIOS APLICADOS:
-//  1. API_URL movida a variable de entorno VITE_GAS_URL
-//  2. PIN "0000" (Espectador) añadido a JUECES_AUTORIZADOS → botón funcionaba roto
-//  3. phaseCutTo[phase] en la vista de lista (era [phase+1], índice incorrecto)
-//  4. useEffect en LoginScreen — handleSubmit convertido a useCallback con deps correctas
-//  5. submitScoreLocal: validación de campos completos antes de guardar
-//  6. Admin panel: no pide PIN nuevamente si el usuario ya es admin (rol ya validado en login)
+// CORE 2026 — Sistema de Arbitraje — Backend: Supabase
+// Migrado desde Google Apps Script. Sin CORS issues, sin tokens inestables.
 // ═══════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useContext, createContext, useCallback, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
+import * as XLSX from "xlsx";
 
-// ─── CONFIGURACIÓN ─────────────────────────────────────────────────
-// FIX #1: API_URL desde variable de entorno (no hardcodeada)
-// En .env local: VITE_GAS_URL=https://script.google.com/macros/s/…/exec
-// En Vercel: Environment Variable VITE_GAS_URL con la misma URL
-const API_URL: string = import.meta.env.VITE_GAS_URL as string || "https://script.google.com/macros/s/AKfycbwD2vy4w3F3dGxdlsj5U3eE36S1Q2vDZVBQWVy6Fz12PM6mSLnyoeCxvP_Q1sw1GZCRaA/exec";
+// ─── CLIENTE SUPABASE ──────────────────────────────────────────────
+// Variables en .env: VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
+// En Vercel: añadir las mismas en Project Settings → Environment Variables
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL as string,
+  import.meta.env.VITE_SUPABASE_ANON_KEY as string
+);
 
 const C = {
   purple: "#CC67FE", blue: "#0474FD", orange: "#FF5500", green: "#84CD05",
@@ -27,7 +22,7 @@ const C = {
 };
 
 const PHASE_COLOR: Record<number, string> = { 1: C.blue, 2: C.green, 3: C.purple, 4: C.orange };
-const PHASE_TEXT: Record<number, string>  = { 1: C.white, 2: C.dark,  3: C.white,  4: C.white  };
+const PHASE_TEXT: Record<number, string> = { 1: C.white, 2: C.dark, 3: C.white, 4: C.white };
 
 // ─── TIPOS ─────────────────────────────────────────────────────────
 interface JuezInfo { nombre: string; rol: "juez" | "admin" | "espectador"; }
@@ -46,18 +41,18 @@ interface RankingEntry { id: number; name: string; score: number | null; tiebrea
 // El backend es la fuente de verdad; esto permite UX offline parcial
 // FIX #2: "0000" agregado para el modo Espectador (antes faltaba y el botón fallaba)
 const JUECES_AUTORIZADOS: Record<string, JuezInfo> = {
-  "0000": { nombre: "Espectador",          rol: "espectador" },
-  "1001": { nombre: "Alexis Cáceres",       rol: "juez"  },
-  "1002": { nombre: "Abril Urdaneta",       rol: "juez"  },
-  "1003": { nombre: "Mirian Echenique",     rol: "juez"  },
-  "1004": { nombre: "Oscar Alvarado",       rol: "juez"  },
-  "1005": { nombre: "Jose Marrufo",         rol: "juez"  },
-  "1006": { nombre: "Jehova Leal",          rol: "juez"  },
-  "1007": { nombre: "Xioleidy Colmenarez",  rol: "juez"  },
-  "1008": { nombre: "Mariangela Moreno",    rol: "juez"  },
-  "1009": { nombre: "Mariangel Rojas",      rol: "juez"  },
-  "8888": { nombre: "Nuevo Admin",          rol: "admin" },
-  "9999": { nombre: "Admin Master",         rol: "admin" },
+  "0000": { nombre: "Espectador", rol: "espectador" },
+  "1001": { nombre: "Alexis Cáceres", rol: "juez" },
+  "1002": { nombre: "Abril Urdaneta", rol: "juez" },
+  "1003": { nombre: "Mirian Echenique", rol: "juez" },
+  "1004": { nombre: "Oscar Alvarado", rol: "juez" },
+  "1005": { nombre: "Jose Marrufo", rol: "juez" },
+  "1006": { nombre: "Jehova Leal", rol: "juez" },
+  "1007": { nombre: "Xioleidy Colmenarez", rol: "juez" },
+  "1008": { nombre: "Mariangela Moreno", rol: "juez" },
+  "1009": { nombre: "Mariangel Rojas", rol: "juez" },
+  "8888": { nombre: "Nuevo Admin", rol: "admin" },
+  "9999": { nombre: "Admin Master", rol: "admin" },
 };
 
 // ─── CONFIGURACIÓN DE FASES ────────────────────────────────────────
@@ -86,29 +81,29 @@ const phaseConfig: Record<number, PhaseConfig> = {
       {
         key: "precision", label: "Precisión de Navegación", type: "buttons",
         opts: [
-          { label: "0 Faltas",  sub: "2 pts",    value: 2,    color: C.green  },
-          { label: "1 Falta",   sub: "1.75 pts", value: 1.75, color: C.blue   },
-          { label: "2 Faltas",  sub: "1.5 pts",  value: 1.5,  color: C.purple },
-          { label: "3 Faltas",  sub: "1 pt",     value: 1,    color: C.orange },
-          { label: "+3 Faltas", sub: "0 pts",    value: 0,    color: "#999"   },
+          { label: "0 Faltas", sub: "2 pts", value: 2, color: C.green },
+          { label: "1 Falta", sub: "1.75 pts", value: 1.75, color: C.blue },
+          { label: "2 Faltas", sub: "1.5 pts", value: 1.5, color: C.purple },
+          { label: "3 Faltas", sub: "1 pt", value: 1, color: C.orange },
+          { label: "+3 Faltas", sub: "0 pts", value: 0, color: "#999" },
         ],
       },
       {
         key: "parking", label: "Cobertura del Área Verde", type: "cards",
         opts: [
-          { label: "✅ Totalidad / Mayoría", sub: "Cubre área total",  value: 4, color: C.green  },
-          { label: "⚠️ Parcialmente",        sub: "Cubre parcial",     value: 2, color: C.blue   },
-          { label: "📍 Llega pero fuera",    sub: "Fuera del cuadro",  value: 1, color: C.purple },
-          { label: "❌ No estacionó",         sub: "0 pts",             value: 0, color: C.orange },
+          { label: "✅ Totalidad / Mayoría", sub: "Cubre área total", value: 4, color: C.green },
+          { label: "⚠️ Parcialmente", sub: "Cubre parcial", value: 2, color: C.blue },
+          { label: "📍 Llega pero fuera", sub: "Fuera del cuadro", value: 1, color: C.purple },
+          { label: "❌ No estacionó", sub: "0 pts", value: 0, color: C.orange },
         ],
       },
       {
         key: "timing", label: "Tiempo de Ejecución", type: "cards",
         opts: [
-          { label: "< 1:00 min", sub: "Muy rápido", value: 4, color: C.green  },
-          { label: "< 1:30 min", sub: "Rápido",     value: 2, color: C.blue   },
-          { label: "< 2:00 min", sub: "Regular",    value: 1, color: C.purple },
-          { label: "≥ 2:00 min", sub: "Anulada",    value: 0, color: "#999"   },
+          { label: "< 1:00 min", sub: "Muy rápido", value: 4, color: C.green },
+          { label: "< 1:30 min", sub: "Rápido", value: 2, color: C.blue },
+          { label: "< 2:00 min", sub: "Regular", value: 1, color: C.purple },
+          { label: "≥ 2:00 min", sub: "Anulada", value: 0, color: "#999" },
         ],
       },
       { key: "tiebreak", label: "Tiempo exacto para desempate (segundos, ej: 87.50)", type: "number" },
@@ -123,22 +118,22 @@ const phaseConfig: Record<number, PhaseConfig> = {
       {
         key: "trace1", label: "Trazo 1 — Cono Rojo", type: "cards",
         opts: [
-          { label: "✅ Por la derecha",  sub: "Correcto — 4 pts",       value: 4, color: C.green  },
-          { label: "❌ Infracción",       sub: "Por izquierda — 0 pts",  value: 0, color: C.orange },
+          { label: "✅ Por la derecha", sub: "Correcto — 4 pts", value: 4, color: C.green },
+          { label: "❌ Infracción", sub: "Por izquierda — 0 pts", value: 0, color: C.orange },
         ],
       },
       {
         key: "trace2", label: "Trazo 2 — Cono Verde", type: "cards",
         opts: [
-          { label: "✅ Por la izquierda", sub: "Correcto — 4 pts",    value: 4, color: C.green  },
-          { label: "❌ Infracción",        sub: "Por derecha — 0 pts", value: 0, color: C.orange },
+          { label: "✅ Por la izquierda", sub: "Correcto — 4 pts", value: 4, color: C.green },
+          { label: "❌ Infracción", sub: "Por derecha — 0 pts", value: 0, color: C.orange },
         ],
       },
       {
         key: "trace3", label: "Trazo 3 — Final", type: "cards",
         opts: [
-          { label: "✅ Sin saltar secciones", sub: "Correcto — 4 pts", value: 4, color: C.green  },
-          { label: "❌ Saltó sección",         sub: "Anulada — 0 pts",  value: 0, color: C.orange },
+          { label: "✅ Sin saltar secciones", sub: "Correcto — 4 pts", value: 4, color: C.green },
+          { label: "❌ Saltó sección", sub: "Anulada — 0 pts", value: 0, color: C.orange },
         ],
       },
       { key: "tiebreak", label: "Tiempo exacto para desempate (segundos, ej: 95.20)", type: "number" },
@@ -152,28 +147,28 @@ const phaseConfig: Record<number, PhaseConfig> = {
       {
         key: "obj1", label: "Objeto 1", type: "cards",
         opts: [
-          { label: "✅ Dentro zona roja",   sub: "5 pts",   value: 5,   color: C.green  },
-          { label: "⚠️ Parcial zona roja",  sub: "2.5 pts", value: 2.5, color: C.blue   },
-          { label: "📍 Movido, fuera zona", sub: "1 pt",    value: 1,   color: C.purple },
-          { label: "❌ No fue movido",       sub: "0 pts",   value: 0,   color: "#999"   },
+          { label: "✅ Dentro zona roja", sub: "5 pts", value: 5, color: C.green },
+          { label: "⚠️ Parcial zona roja", sub: "2.5 pts", value: 2.5, color: C.blue },
+          { label: "📍 Movido, fuera zona", sub: "1 pt", value: 1, color: C.purple },
+          { label: "❌ No fue movido", sub: "0 pts", value: 0, color: "#999" },
         ],
       },
       {
         key: "obj2", label: "Objeto 2", type: "cards",
         opts: [
-          { label: "✅ Dentro zona roja",   sub: "5 pts",   value: 5,   color: C.green  },
-          { label: "⚠️ Parcial zona roja",  sub: "2.5 pts", value: 2.5, color: C.blue   },
-          { label: "📍 Movido, fuera zona", sub: "1 pt",    value: 1,   color: C.purple },
-          { label: "❌ No fue movido",       sub: "0 pts",   value: 0,   color: "#999"   },
+          { label: "✅ Dentro zona roja", sub: "5 pts", value: 5, color: C.green },
+          { label: "⚠️ Parcial zona roja", sub: "2.5 pts", value: 2.5, color: C.blue },
+          { label: "📍 Movido, fuera zona", sub: "1 pt", value: 1, color: C.purple },
+          { label: "❌ No fue movido", sub: "0 pts", value: 0, color: "#999" },
         ],
       },
       {
         key: "obj3", label: "Objeto 3", type: "cards",
         opts: [
-          { label: "✅ Dentro zona roja",   sub: "5 pts",   value: 5,   color: C.green  },
-          { label: "⚠️ Parcial zona roja",  sub: "2.5 pts", value: 2.5, color: C.blue   },
-          { label: "📍 Movido, fuera zona", sub: "1 pt",    value: 1,   color: C.purple },
-          { label: "❌ No fue movido",       sub: "0 pts",   value: 0,   color: "#999"   },
+          { label: "✅ Dentro zona roja", sub: "5 pts", value: 5, color: C.green },
+          { label: "⚠️ Parcial zona roja", sub: "2.5 pts", value: 2.5, color: C.blue },
+          { label: "📍 Movido, fuera zona", sub: "1 pt", value: 1, color: C.purple },
+          { label: "❌ No fue movido", sub: "0 pts", value: 0, color: "#999" },
         ],
       },
       { key: "tiebreak", label: "Tiempo exacto para desempate (segundos)", type: "number" },
@@ -204,52 +199,55 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const saved = sessionStorage.getItem("core2026_session");
       if (saved) setUser(JSON.parse(saved) as SessionUser);
-    } catch (_) {}
+    } catch (_) { }
   }, []);
 
   const login = useCallback(async (pin: string): Promise<boolean> => {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      // 1. Validación local instantánea (UX en campo)
+      // Espectador público — no requiere validación
+      if (pin === "0000") {
+        const spectator: SessionUser = { nombre: "Espectador", rol: "espectador", pin: "0000", token: "public" };
+        setUser(spectator);
+        try { sessionStorage.setItem("core2026_session", JSON.stringify(spectator)); } catch (_) { }
+        return true;
+      }
+
+      // Validar PIN contra tabla jueces en Supabase
+      const { data: juezData, error: sbError } = await supabase
+        .from("jueces")
+        .select("nombre, rol")
+        .eq("pin", pin)
+        .single();
+
+      if (!sbError && juezData) {
+        // Supabase respondió OK
+        const sessionUser: SessionUser = {
+          nombre: juezData.nombre as string,
+          rol: juezData.rol as "juez" | "admin" | "espectador",
+          pin,
+          token: `sb_${Date.now()}`,
+        };
+        setUser(sessionUser);
+        try { sessionStorage.setItem("core2026_session", JSON.stringify(sessionUser)); } catch (_) { }
+        return true;
+      }
+
+      // Fallback: diccionario local si Supabase no responde
       const localUser = JUECES_AUTORIZADOS[pin];
-      if (!localUser) {
-        setAuthError("PIN inválido. Verifica con el administrador.");
-        return false;
+      if (localUser) {
+        const fallback: SessionUser = { ...localUser, pin, token: `offline_${Date.now()}`, offline: true };
+        setUser(fallback);
+        try { sessionStorage.setItem("core2026_session", JSON.stringify(fallback)); } catch (_) { }
+        setAuthError("⚠ Modo offline — datos se sincronizarán al reconectar.");
+        return true;
       }
 
-      // 2. Validación en backend (fuente de verdad)
-      // Espectador (0000) no requiere validación en backend
-      let token = `local_${pin}_${Date.now()}`;
-      if (pin !== "0000" && API_URL && !API_URL.includes("TU_DEPLOYMENT_ID")) {
-        try {
-          const resp = await fetch(API_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "LOGIN", pin }),
-          });
-          if (!resp.ok) throw new Error(`Error servidor: ${resp.status}`);
-          const data = await resp.json() as { status: string; token?: string; message?: string };
-          if (data.status === "error") throw new Error(data.message);
-          token = data.token ?? token;
-        } catch (backendErr) {
-          // Backend falló pero local OK → modo offline
-          console.warn("Backend no disponible, continuando offline:", backendErr);
-          const fallback: SessionUser = { ...localUser, pin, token: `offline_${Date.now()}`, offline: true };
-          setUser(fallback);
-          try { sessionStorage.setItem("core2026_session", JSON.stringify(fallback)); } catch (_) {}
-          setAuthError("⚠ Modo offline — cambios se sincronizarán al reconectar.");
-          return true;
-        }
-      }
-
-      const sessionUser: SessionUser = { ...localUser, pin, token };
-      setUser(sessionUser);
-      try { sessionStorage.setItem("core2026_session", JSON.stringify(sessionUser)); } catch (_) {}
-      return true;
-    } catch (err) {
-      setAuthError("Error inesperado. Intenta de nuevo.");
-      console.error("Login error:", err);
+      setAuthError("PIN inválido. Verifica con el administrador.");
+      return false;
+    } catch {
+      setAuthError("Error de conexión. Intenta de nuevo.");
       return false;
     } finally {
       setAuthLoading(false);
@@ -258,7 +256,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     setUser(null);
-    try { sessionStorage.removeItem("core2026_session"); } catch (_) {}
+    try { sessionStorage.removeItem("core2026_session"); } catch (_) { }
   }, []);
 
   return (
@@ -275,134 +273,111 @@ const useAuth = (): AuthContextValue => {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// useSheetsAPI HOOK — Comunicación con Google Apps Script
-// Sin mode:'no-cors'. CORS resuelto en el backend (gas-backend.js)
+// useSupabaseAPI HOOK — Reemplaza useSheetsAPI. Sin CORS, sin tokens GAS.
 // ═══════════════════════════════════════════════════════════════════
 interface PendingItem { fase: number; equipoId: number; scoreData: ScoreEntry; ts: number; }
 
-function useSheetsAPI() {
+function useSupabaseAPI() {
   const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingQueue = useRef<PendingItem[]>([]);
 
-  const apiCall = useCallback(async (payload: Record<string, unknown>, retries = 3): Promise<Record<string, unknown>> => {
-    if (!API_URL || API_URL.includes("TU_DEPLOYMENT_ID") || API_URL === "") {
-      // DEMO MODE: simular latencia y éxito
-      await new Promise(r => setTimeout(r, 600));
-      return { status: "ok", demo: true };
-    }
-
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        const resp = await fetch(API_URL, {
-          method: "POST",
-          // SIN mode:'no-cors' — CORS se gestiona en GAS con ContentService
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...payload, token: user?.token }),
-        });
-
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json() as { status: string; message?: string };
-        if (data.status === "error") throw new Error(data.message || "Error del servidor");
-        return data as Record<string, unknown>;
-      } catch (err) {
-        const isLast = attempt === retries;
-        if (isLast) throw err;
-        // Backoff exponencial: 1s, 2s, 4s
-        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
-      }
-    }
-    throw new Error("Max retries exceeded");
-  }, [user]);
-
-  const submitScore = useCallback(async (fase: number, equipoId: number, scoreData: ScoreEntry): Promise<boolean> => {
+  // ── Guardar puntaje ──────────────────────────────────────────────
+  const submitScore = useCallback(async (
+    fase: number,
+    equipoId: number,
+    scoreData: Record<string, unknown>
+  ): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
-
-    // FIX TOKEN OFFLINE: Si el token es offline, el GAS lo rechaza.
-    // Forzar re-login o avisar claramente al juez.
-    if (user?.token?.startsWith("offline_")) {
-      pendingQueue.current.push({ fase, equipoId, scoreData, ts: Date.now() });
-      setError("⚠ Estás en modo offline. Puntaje guardado localmente. Se enviará al reconectar.");
-      setIsLoading(false);
-      return true; // true porque sí se guardó localmente
-    }
-
     try {
-      await apiCall({
-        action: "SUBMIT_SCORE",
-        fase,
-        equipoId,
-        juez: user?.nombre,
-        timestamp: new Date().toISOString(),
-        ...scoreData,
-      });
+      let total = 0;
+      if (fase === 1) total = parseFloat(String(scoreData.time || 0));
+      if (fase === 2) total = parseFloat(String(scoreData.precision || 0)) + parseFloat(String(scoreData.parking || 0)) + parseFloat(String(scoreData.timing || 0));
+      if (fase === 3) total = parseFloat(String(scoreData.trace1 || 0)) + parseFloat(String(scoreData.trace2 || 0)) + parseFloat(String(scoreData.trace3 || 0));
+      if (fase === 4) total = parseFloat(String(scoreData.obj1 || 0)) + parseFloat(String(scoreData.obj2 || 0)) + parseFloat(String(scoreData.obj3 || 0));
+
+      const { error: sbError } = await supabase
+        .from("puntajes")
+        .upsert({
+          equipo_id: equipoId,
+          fase,
+          juez_nombre: user?.nombre || "Desconocido",
+          total: Math.round(total * 100) / 100,
+          tiebreak: scoreData.tiebreak ? parseFloat(String(scoreData.tiebreak)) : null,
+          tiempo: scoreData.time ? parseFloat(String(scoreData.time)) : null,
+          precision: scoreData.precision ? parseFloat(String(scoreData.precision)) : null,
+          parking: scoreData.parking ? parseFloat(String(scoreData.parking)) : null,
+          timing: scoreData.timing ? parseFloat(String(scoreData.timing)) : null,
+          trace1: scoreData.trace1 ? parseFloat(String(scoreData.trace1)) : null,
+          trace2: scoreData.trace2 ? parseFloat(String(scoreData.trace2)) : null,
+          trace3: scoreData.trace3 ? parseFloat(String(scoreData.trace3)) : null,
+          obj1: scoreData.obj1 ? parseFloat(String(scoreData.obj1)) : null,
+          obj2: scoreData.obj2 ? parseFloat(String(scoreData.obj2)) : null,
+          obj3: scoreData.obj3 ? parseFloat(String(scoreData.obj3)) : null,
+        }, { onConflict: "equipo_id,fase" });
+
+      if (sbError) throw sbError;
       return true;
     } catch (err) {
-      console.error("Error enviando puntaje:", err);
-      // Encolar para reintento offline
-      pendingQueue.current.push({ fase, equipoId, scoreData, ts: Date.now() });
-      setError("Problema de conexión. El puntaje se reintentará al reconectar.");
+      console.error("Supabase submitScore error:", err);
+      pendingQueue.current.push({ fase, equipoId, scoreData: scoreData as ScoreEntry, ts: Date.now() });
+      setError("Sin conexión. Puntaje guardado localmente, se sincronizará al reconectar.");
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [apiCall, user]);
+  }, [user]);
 
-  // FIX CORS: fetchLeaderboard usa GET (doGet en GAS), no POST.
-  // doGet no requiere token y no tiene problemas de CORS con preflight.
-  const fetchLeaderboard = useCallback(async (): Promise<unknown[]> => {
-    if (!API_URL || API_URL.includes("TU_DEPLOYMENT_ID")) return [];
+  // ── Clasificar equipos ───────────────────────────────────────────
+  const qualify = useCallback(async (fase: number, teamIds: number[]): Promise<boolean> => {
     try {
-      const resp = await fetch(`${API_URL}?action=GET_LEADERBOARD`, {
-        method: "GET",
-        // GET no dispara preflight CORS — funciona directamente con GAS
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json() as { status: string; leaderboard?: unknown[] };
-      return data?.leaderboard || [];
+      const { error: sbError } = await supabase
+        .from("clasificados")
+        .upsert({ fase, equipo_ids: teamIds }, { onConflict: "fase" });
+      if (sbError) throw sbError;
+      return true;
     } catch (err) {
-      console.warn("Leaderboard fetch silencioso:", err);
-      return []; // Falla silenciosamente — no muestra error al juez
+      console.error("Error qualify:", err);
+      return false;
     }
   }, []);
 
-  const qualify = useCallback(async (fase: number, teamIds: number[]): Promise<boolean> => {
-    setIsLoading(true);
+  // ── Leer todos los puntajes ──────────────────────────────────────
+  const fetchAllScores = useCallback(async () => {
     try {
-      await apiCall({ action: "SET_QUALIFIED", fase, teamIds });
-      return true;
-    } catch (err) {
-      setError("Error al clasificar equipos.");
-      console.error(err);
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [apiCall]);
+      const { data, error: sbError } = await supabase.from("puntajes").select("*");
+      if (sbError) throw sbError;
+      return data || [];
+    } catch { return []; }
+  }, []);
 
-  // Reintentar cola pendiente cuando hay conexión
+  // ── Leer clasificados ────────────────────────────────────────────
+  const fetchClasificados = useCallback(async () => {
+    try {
+      const { data, error: sbError } = await supabase.from("clasificados").select("*");
+      if (sbError) throw sbError;
+      return data || [];
+    } catch { return []; }
+  }, []);
+
+  // ── Reintentar cola offline cada 15s ────────────────────────────
   useEffect(() => {
     const flush = async () => {
       if (!pendingQueue.current.length) return;
       const toRetry = [...pendingQueue.current];
       pendingQueue.current = [];
       for (const item of toRetry) {
-        try {
-          await apiCall({
-            action: "SUBMIT_SCORE", fase: item.fase,
-            equipoId: item.equipoId, juez: user?.nombre,
-            timestamp: new Date().toISOString(), ...item.scoreData,
-          });
-        } catch (_) { pendingQueue.current.push(item); }
+        const ok = await submitScore(item.fase, item.equipoId, item.scoreData);
+        if (!ok) pendingQueue.current.push(item); // Reencolar si sigue fallando
       }
     };
     const interval = setInterval(flush, 15000);
     return () => clearInterval(interval);
-  }, [apiCall, user]);
+  }, [submitScore]);
 
-  return { submitScore, fetchLeaderboard, qualify, isLoading, error, setError };
+  return { submitScore, qualify, fetchAllScores, fetchClasificados, isLoading, error, setError };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -505,8 +480,10 @@ function LoginScreen() {
         <div style={{ color: C.grayMid, fontSize: 13, textAlign: "center", marginBottom: 16 }}>Ingresa tu PIN de Juez</div>
 
         {/* PIN display */}
-        <div style={{ display: "flex", gap: 12, justifyContent: "center", marginBottom: 24,
-          transform: shake ? "translateX(-8px)" : "none", transition: "transform .1s" }}>
+        <div style={{
+          display: "flex", gap: 12, justifyContent: "center", marginBottom: 24,
+          transform: shake ? "translateX(-8px)" : "none", transition: "transform .1s"
+        }}>
           {[0, 1, 2, 3].map(i => (
             <div key={i} style={{ width: 48, height: 48, borderRadius: 12, background: pin.length > i ? C.purple : "#1A1A2E", border: `2px solid ${pin.length > i ? C.purple : "#3A3A5E"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, color: C.white }}>
               {pin.length > i ? "●" : ""}
@@ -589,7 +566,7 @@ function PublicLeaderboard({ data }: { data: AppData }) {
 // ═══════════════════════════════════════════════════════════════════
 function DashboardLayout() {
   const { user, logout } = useAuth();
-  const { submitScore, qualify: qualifyAPI, fetchLeaderboard, isLoading: apiLoading, error: apiError, setError: setApiError } = useSheetsAPI();
+  const { submitScore, qualify: qualifyAPI, fetchAllScores, fetchClasificados, isLoading: apiLoading, error: apiError, setError: setApiError } = useSupabaseAPI();
   const [data, setData] = useState<AppData | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"dashboard" | "phase" | "score">("dashboard");
@@ -602,8 +579,7 @@ function DashboardLayout() {
   const [manageTeams, setManageTeams] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
 
-  // FIX SEPARACIÓN: load() solo lee localStorage (rápido, sin red).
-  // La sincronización con el servidor es independiente para no bloquear la UI.
+  // load() — solo lee localStorage, instantáneo sin red
   const load = useCallback(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -612,36 +588,126 @@ function DashboardLayout() {
     setLoading(false);
   }, []);
 
-  // FIX SYNC: syncFromServer actualiza datos del servidor en segundo plano
-  // sin interferir con el estado de carga local ni mostrar errores al juez.
+  // syncFromServer() — lee Supabase en segundo plano y fusiona con estado local
   const syncFromServer = useCallback(async () => {
-    const serverLeaderboard = await fetchLeaderboard() as Array<{id:number;f2:number;f3:number;f4:number;tb2:number;tb3:number;tb4:number}>;
-    if (!serverLeaderboard?.length) return;
-    setData(prev => {
-      if (!prev) return prev;
-      const scores = { ...prev.scores };
-      let updated = false;
-      serverLeaderboard.forEach(({ id, f2, f3, f4, tb2, tb3, tb4 }) => {
-        if (f2 > 0 && !scores[`2_${id}`]) { scores[`2_${id}`] = { timing: String(f2), tiebreak: tb2, judge: "sync" }; updated = true; }
-        if (f3 > 0 && !scores[`3_${id}`]) { scores[`3_${id}`] = { trace1: String(f3), tiebreak: tb3, judge: "sync" }; updated = true; }
-        if (f4 > 0 && !scores[`4_${id}`]) { scores[`4_${id}`] = { obj1: String(f4), tiebreak: tb4, judge: "sync" }; updated = true; }
+    try {
+      const [scoresRaw, clasificadosRaw, equiposResp] = await Promise.all([
+        fetchAllScores(),
+        fetchClasificados(),
+        supabase.from("equipos").select("id, nombre"),
+      ]);
+      const equiposRaw = equiposResp.data || [];
+
+      setData(prev => {
+        if (!prev) return prev;
+        const newScores = { ...prev.scores };
+        (scoresRaw as any[]).forEach(row => {
+          const key = `${row.fase}_${row.equipo_id}`;
+          newScores[key] = {
+            time: row.tiempo,
+            precision: row.precision,
+            parking: row.parking,
+            timing: row.timing,
+            trace1: row.trace1,
+            trace2: row.trace2,
+            trace3: row.trace3,
+            obj1: row.obj1,
+            obj2: row.obj2,
+            obj3: row.obj3,
+            tiebreak: row.tiebreak,
+            judge: row.juez_nombre as string,
+          } as ScoreEntry;
+        });
+        const newQualified = { ...prev.qualified };
+        (clasificadosRaw as any[]).forEach(row => {
+          newQualified[`p${row.fase}`] = row.equipo_ids as number[];
+        });
+        const teams = equiposRaw.length > 0
+          ? equiposRaw.map((e: Record<string, unknown>) => ({ id: e.id as number, name: e.nombre as string }))
+          : prev.teams;
+        const updated = { ...prev, scores: newScores, qualified: newQualified, teams, lastUpdated: new Date().toISOString() };
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); } catch (_) { }
+        return updated;
       });
-      if (!updated) return prev;
-      const next = { ...prev, scores };
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
-      return next;
-    });
-  }, [fetchLeaderboard]);
+    } catch (err) {
+      console.warn("syncFromServer falló (modo offline):", err);
+    }
+  }, [fetchAllScores, fetchClasificados]);
 
   // Carga inicial desde localStorage (inmediata)
   useEffect(() => { load(); }, [load]);
 
-  // Polling de sincronización con servidor cada 5s (en segundo plano)
+  // Sync inicial + polling cada 5s con Supabase
   useEffect(() => {
-    syncFromServer(); // Primera sync al montar
-    const interval = setInterval(syncFromServer, 5000);
-    return () => clearInterval(interval);
+    syncFromServer();
+    const iv = setInterval(syncFromServer, 5000);
+    return () => clearInterval(iv);
   }, [syncFromServer]);
+
+  // Realtime: actualizar en todos los dispositivos cuando un juez guarda
+  useEffect(() => {
+    const channel = supabase
+      .channel("puntajes_changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "puntajes" }, () => {
+        syncFromServer();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [syncFromServer]);
+
+  // Exportación XLS (solo admin)
+  const exportarXLS = useCallback(async () => {
+    try {
+      const [scoresResp, equiposResp] = await Promise.all([
+        supabase.from("puntajes").select("*, equipos(nombre)"),
+        supabase.from("equipos").select("*"),
+      ]);
+      const scores = (scoresResp.data || []) as Array<Record<string, unknown>>;
+      const equipos = (equiposResp.data || []) as Array<Record<string, unknown>>;
+
+      const wb = XLSX.utils.book_new();
+
+      // Hoja Resumen
+      const resumen = equipos.map(eq => {
+        const f1 = scores.find(s => s.equipo_id === eq.id && s.fase === 1);
+        const f2 = scores.find(s => s.equipo_id === eq.id && s.fase === 2);
+        const f3 = scores.find(s => s.equipo_id === eq.id && s.fase === 3);
+        const f4 = scores.find(s => s.equipo_id === eq.id && s.fase === 4);
+        return {
+          "Equipo": eq.nombre,
+          "F1 - Tiempo(s)": f1?.tiempo ?? "–",
+          "F2 - Puntaje": f2?.total ?? "–",
+          "F2 - Tiempo": f2?.tiebreak ?? "–",
+          "F3 - Puntaje": f3?.total ?? "–",
+          "F3 - Tiempo": f3?.tiebreak ?? "–",
+          "F4 - Puntaje": f4?.total ?? "–",
+          "F4 - Tiempo": f4?.tiebreak ?? "–",
+          "Total F2+F3+F4": (((f2?.total as number) || 0) + ((f3?.total as number) || 0) + ((f4?.total as number) || 0)).toFixed(2),
+        };
+      }).sort((a, b) => parseFloat(String(b["Total F2+F3+F4"])) - parseFloat(String(a["Total F2+F3+F4"])));
+
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Resumen");
+
+      // Hojas por fase
+      [1, 2, 3, 4].forEach(fase => {
+        const faseData = scores
+          .filter(s => s.fase === fase)
+          .map(s => ({
+            "Equipo": (s.equipos as Record<string, unknown>)?.nombre || s.equipo_id,
+            "Juez": s.juez_nombre,
+            "Total": s.total,
+            "Tiebreak": s.tiebreak,
+            "Timestamp": s.actualizado_en,
+          }));
+        if (faseData.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(faseData), `Fase ${fase}`);
+      });
+
+      XLSX.writeFile(wb, `CORE_2026_Resultados_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (err) {
+      console.error("Error exportando XLS:", err);
+      alert("Error al exportar. Verifica la conexión con Supabase.");
+    }
+  }, []);
 
   const persist = useCallback(async (d: AppData) => {
     const nd: AppData = { ...d, lastUpdated: new Date().toISOString() };
@@ -703,12 +769,17 @@ function DashboardLayout() {
     }
     const key = `${phase}_${scoringId}`;
     const payload: ScoreEntry = { ...form, judge: user?.nombre, ts: new Date().toISOString() };
-    // Enviar a Sheets (no bloquea si falla — cola offline)
-    submitScore(phase, scoringId!, payload);
-    // Actualizar estado local inmediatamente (UX optimista)
-    await persist({ ...data, scores: { ...data.scores, [key]: payload } });
+
+    // 1. Guardar localmente de inmediato (UX optimista)
+    await persist({ ...data!, scores: { ...data!.scores, [key]: payload } });
     setScoringId(null);
     setView("phase");
+
+    // 2. Enviar a Supabase en segundo plano (no bloquea la UI)
+    const ok = await submitScore(phase, scoringId!, payload);
+    if (!ok) {
+      console.warn("Puntaje en cola offline para equipo", scoringId, "fase", phase);
+    }
   };
 
   const doQualify = async (fromPhase: number) => {
@@ -805,6 +876,7 @@ function DashboardLayout() {
               <button key={p} id={`btn-reset-f${p}`} onClick={() => { if (window.confirm(`¿Reiniciar Fase ${p}? Se borrarán todos los puntajes de F${p} en adelante.`)) resetPhase(p); }} style={{ fontSize: 12, background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset F{p}</button>
             ))}
             <button id="btn-reset-all" onClick={() => { if (window.confirm("¿Borrar TODO el torneo? Esta acción no se puede deshacer.")) persist(defaultData()); }} style={{ fontSize: 12, background: "#cc0000", color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset Total</button>
+            <button id="btn-export-xls" onClick={exportarXLS} style={{ fontSize: 12, background: C.green, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700 }}>📥 Exportar XLS</button>
             <button onClick={() => setAdminOpen(false)} style={{ fontSize: 12, background: C.grayMid, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Cerrar</button>
           </div>
         </div>

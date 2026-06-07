@@ -319,6 +319,16 @@ function useSheetsAPI() {
   const submitScore = useCallback(async (fase: number, equipoId: number, scoreData: ScoreEntry): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
+
+    // FIX TOKEN OFFLINE: Si el token es offline, el GAS lo rechaza.
+    // Forzar re-login o avisar claramente al juez.
+    if (user?.token?.startsWith("offline_")) {
+      pendingQueue.current.push({ fase, equipoId, scoreData, ts: Date.now() });
+      setError("⚠ Estás en modo offline. Puntaje guardado localmente. Se enviará al reconectar.");
+      setIsLoading(false);
+      return true; // true porque sí se guardó localmente
+    }
+
     try {
       await apiCall({
         action: "SUBMIT_SCORE",
@@ -333,27 +343,30 @@ function useSheetsAPI() {
       console.error("Error enviando puntaje:", err);
       // Encolar para reintento offline
       pendingQueue.current.push({ fase, equipoId, scoreData, ts: Date.now() });
-      setError("Problema de conexión. El puntaje se reintentará al reconectar. No cierres la pantalla.");
+      setError("Problema de conexión. El puntaje se reintentará al reconectar.");
       return false;
     } finally {
       setIsLoading(false);
     }
   }, [apiCall, user]);
 
+  // FIX CORS: fetchLeaderboard usa GET (doGet en GAS), no POST.
+  // doGet no requiere token y no tiene problemas de CORS con preflight.
   const fetchLeaderboard = useCallback(async (): Promise<unknown[]> => {
-    setIsLoading(true);
-    setError(null);
+    if (!API_URL || API_URL.includes("TU_DEPLOYMENT_ID")) return [];
     try {
-      const data = await apiCall({ action: "GET_LEADERBOARD" });
-      return (data?.leaderboard as unknown[]) || [];
+      const resp = await fetch(`${API_URL}?action=GET_LEADERBOARD`, {
+        method: "GET",
+        // GET no dispara preflight CORS — funciona directamente con GAS
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json() as { status: string; leaderboard?: unknown[] };
+      return data?.leaderboard || [];
     } catch (err) {
-      setError("No se pudo cargar el leaderboard.");
-      console.error(err);
-      return [];
-    } finally {
-      setIsLoading(false);
+      console.warn("Leaderboard fetch silencioso:", err);
+      return []; // Falla silenciosamente — no muestra error al juez
     }
-  }, [apiCall]);
+  }, []);
 
   const qualify = useCallback(async (fase: number, teamIds: number[]): Promise<boolean> => {
     setIsLoading(true);
@@ -589,43 +602,46 @@ function DashboardLayout() {
   const [manageTeams, setManageTeams] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
 
-  const load = useCallback(async () => {
+  // FIX SEPARACIÓN: load() solo lee localStorage (rápido, sin red).
+  // La sincronización con el servidor es independiente para no bloquear la UI.
+  const load = useCallback(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      let localData = raw ? JSON.parse(raw) as AppData : defaultData();
-      
-      // Sincronización en tiempo real: obtener datos del servidor y mezclarlos con datos locales
-      if (API_URL) {
-        const serverLeaderboard = await fetchLeaderboard() as any[];
-        if (serverLeaderboard && serverLeaderboard.length > 0) {
-           let updated = false;
-           // Fusionar los puntajes del servidor en nuestro estado local
-           // Esto es una simplificación, asume que el servidor tiene datos f2, f3, f4
-           // Para la sincronización completa bidireccional, deberías usar Firebase o WebSockets
-           serverLeaderboard.forEach(serverTeam => {
-             const { id, f2, f3, f4, tb2, tb3, tb4 } = serverTeam;
-             if (f2 > 0 && !localData.scores[`2_${id}`]) { localData.scores[`2_${id}`] = { timing: String(f2), tiebreak: tb2 }; updated = true; }
-             if (f3 > 0 && !localData.scores[`3_${id}`]) { localData.scores[`3_${id}`] = { trace1: String(f3), tiebreak: tb3 }; updated = true; }
-             if (f4 > 0 && !localData.scores[`4_${id}`]) { localData.scores[`4_${id}`] = { obj1: String(f4), tiebreak: tb4 }; updated = true; }
-           });
-           
-           if (updated) {
-             localStorage.setItem(STORAGE_KEY, JSON.stringify(localData));
-           }
-        }
-      }
-      
-      setData(localData);
+      setData(raw ? JSON.parse(raw) as AppData : defaultData());
     } catch { setData(defaultData()); }
     setLoading(false);
+  }, []);
+
+  // FIX SYNC: syncFromServer actualiza datos del servidor en segundo plano
+  // sin interferir con el estado de carga local ni mostrar errores al juez.
+  const syncFromServer = useCallback(async () => {
+    const serverLeaderboard = await fetchLeaderboard() as Array<{id:number;f2:number;f3:number;f4:number;tb2:number;tb3:number;tb4:number}>;
+    if (!serverLeaderboard?.length) return;
+    setData(prev => {
+      if (!prev) return prev;
+      const scores = { ...prev.scores };
+      let updated = false;
+      serverLeaderboard.forEach(({ id, f2, f3, f4, tb2, tb3, tb4 }) => {
+        if (f2 > 0 && !scores[`2_${id}`]) { scores[`2_${id}`] = { timing: String(f2), tiebreak: tb2, judge: "sync" }; updated = true; }
+        if (f3 > 0 && !scores[`3_${id}`]) { scores[`3_${id}`] = { trace1: String(f3), tiebreak: tb3, judge: "sync" }; updated = true; }
+        if (f4 > 0 && !scores[`4_${id}`]) { scores[`4_${id}`] = { obj1: String(f4), tiebreak: tb4, judge: "sync" }; updated = true; }
+      });
+      if (!updated) return prev;
+      const next = { ...prev, scores };
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
+      return next;
+    });
   }, [fetchLeaderboard]);
 
+  // Carga inicial desde localStorage (inmediata)
   useEffect(() => { load(); }, [load]);
+
+  // Polling de sincronización con servidor cada 5s (en segundo plano)
   useEffect(() => {
-    if (!data) return;
-    const iv = setInterval(load, 8000);
-    return () => clearInterval(iv);
-  }, [data, load]);
+    syncFromServer(); // Primera sync al montar
+    const interval = setInterval(syncFromServer, 5000);
+    return () => clearInterval(interval);
+  }, [syncFromServer]);
 
   const persist = useCallback(async (d: AppData) => {
     const nd: AppData = { ...d, lastUpdated: new Date().toISOString() };

@@ -659,49 +659,78 @@ function DashboardLayout() {
   const exportarXLS = useCallback(async () => {
     try {
       const [scoresResp, equiposResp] = await Promise.all([
-        supabase.from("puntajes").select("*, equipos(nombre)"),
+        supabase.from("puntajes").select("*"),
         supabase.from("equipos").select("*"),
       ]);
-      const scores = (scoresResp.data || []) as Array<Record<string, unknown>>;
-      const equipos = (equiposResp.data || []) as Array<Record<string, unknown>>;
+      const scores = (scoresResp.data || []) as Array<Record<string, any>>;
+      const equipos = (equiposResp.data || []) as Array<Record<string, any>>;
 
-      const wb = XLSX.utils.book_new();
+      let matrizDatos: any[] = [];
 
-      // Hoja Resumen
-      const resumen = equipos.map(eq => {
-        const f1 = scores.find(s => s.equipo_id === eq.id && s.fase === 1);
-        const f2 = scores.find(s => s.equipo_id === eq.id && s.fase === 2);
-        const f3 = scores.find(s => s.equipo_id === eq.id && s.fase === 3);
-        const f4 = scores.find(s => s.equipo_id === eq.id && s.fase === 4);
-        return {
-          "Equipo": eq.nombre,
-          "F1 - Tiempo(s)": f1?.tiempo ?? "–",
-          "F2 - Puntaje": f2?.total ?? "–",
-          "F2 - Tiempo": f2?.tiebreak ?? "–",
-          "F3 - Puntaje": f3?.total ?? "–",
-          "F3 - Tiempo": f3?.tiebreak ?? "–",
-          "F4 - Puntaje": f4?.total ?? "–",
-          "F4 - Tiempo": f4?.tiebreak ?? "–",
-          "Total F2+F3+F4": (((f2?.total as number) || 0) + ((f3?.total as number) || 0) + ((f4?.total as number) || 0)).toFixed(2),
-        };
-      }).sort((a, b) => parseFloat(String(b["Total F2+F3+F4"])) - parseFloat(String(a["Total F2+F3+F4"])));
-
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Resumen");
-
-      // Hojas por fase
-      [1, 2, 3, 4].forEach(fase => {
-        const faseData = scores
-          .filter(s => s.fase === fase)
-          .map(s => ({
-            "Equipo": (s.equipos as Record<string, unknown>)?.nombre || s.equipo_id,
-            "Juez": s.juez_nombre,
-            "Total": s.total,
-            "Tiebreak": s.tiebreak,
-            "Timestamp": s.actualizado_en,
-          }));
-        if (faseData.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(faseData), `Fase ${fase}`);
+      // 1. Mapeo correcto iterando sobre los equipos
+      equipos.forEach(eq => {
+        const teamScores = scores.filter(s => s.equipo_id === eq.id);
+        
+        if (teamScores.length === 0) {
+          matrizDatos.push({
+            "Equipo": eq.nombre,
+            "fase": 1,
+            "total": 0,
+            "timing": 0,
+            "precision": 0,
+            "parking": 0,
+            "trace1": 0,
+            "trace2": 0,
+            "trace3": 0,
+            "obj1": 0,
+            "obj2": 0,
+            "obj3": 0,
+            "obj4": 0,
+            "obj5": 0,
+            "penalizaciones": 0,
+            "tiebreak": 0
+          });
+        } else {
+          // Extraer todos los valores numéricos solicitados
+          teamScores.forEach(s => {
+            matrizDatos.push({
+              "Equipo": eq.nombre,
+              "fase": Number(s.fase) || 0,
+              "total": Number(s.total) || 0,
+              "timing": Number(s.timing) || 0,
+              "precision": Number(s.precision) || 0,
+              "parking": Number(s.parking) || 0,
+              "trace1": Number(s.trace1) || 0,
+              "trace2": Number(s.trace2) || 0,
+              "trace3": Number(s.trace3) || 0,
+              "obj1": Number(s.obj1) || 0,
+              "obj2": Number(s.obj2) || 0,
+              "obj3": Number(s.obj3) || 0,
+              "obj4": Number(s.obj4) || 0,
+              "obj5": Number(s.obj5) || 0,
+              "penalizaciones": Number(s.penalizaciones) || 0,
+              "tiebreak": Number(s.tiebreak) || 0
+            });
+          });
+        }
       });
 
+      // 3. Ordenamiento de los datos
+      matrizDatos.sort((a, b) => {
+        // Primero: fase ASCENDENTE
+        if (a.fase !== b.fase) {
+          return a.fase - b.fase;
+        }
+        // Segundo: total DESCENDENTE
+        if (a.total !== b.total) {
+          return b.total - a.total;
+        }
+        // Tercero: tiebreak DESCENDENTE
+        return b.tiebreak - a.tiebreak;
+      });
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(matrizDatos), "Resultados");
       XLSX.writeFile(wb, `CORE_2026_Resultados_${new Date().toISOString().slice(0, 10)}.xlsx`);
     } catch (err) {
       console.error("Error exportando XLS:", err);

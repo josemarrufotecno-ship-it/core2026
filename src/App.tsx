@@ -734,7 +734,7 @@ function DashboardLayout() {
 
       // Pestaña "Fase_1" (Prueba de Velocidad)
       const fase1Data = equipos.map(eq => {
-        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 1);
+        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "1");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -753,7 +753,7 @@ function DashboardLayout() {
 
       // Pestaña "Fase_2" (Habilidades de Conducción)
       const fase2Data = equipos.map(eq => {
-        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 2);
+        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "2");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -774,7 +774,7 @@ function DashboardLayout() {
 
       // Pestaña "Fase_3" (Seguidor de Línea)
       const fase3Data = equipos.map(eq => {
-        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 3);
+        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "3");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -795,7 +795,7 @@ function DashboardLayout() {
 
       // Pestaña "Fase_4" (Resolución de Objetivos)
       const fase4Data = equipos.map(eq => {
-        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 4);
+        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "4");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -820,7 +820,7 @@ function DashboardLayout() {
         try {
           const ids = Array.isArray(c.equipo_ids) ? c.equipo_ids : JSON.parse(c.equipo_ids || "[]");
           const names = ids.map((id: number) => {
-            const eq = equipos.find(e => e.id === id);
+            const eq = equipos.find(e => String(e.id) === String(id));
             return eq ? `${eq.nombre} (ID: ${id})` : `ID: ${id}`;
           });
           equiposList = JSON.stringify(names);
@@ -844,9 +844,9 @@ function DashboardLayout() {
 
       // Pestaña "Reporte_Final"
       const reporteFinalData = equipos.map(eq => {
-        const f2 = scores.find(s => s.equipo_id === eq.id && s.fase === 2);
-        const f3 = scores.find(s => s.equipo_id === eq.id && s.fase === 3);
-        const f4 = scores.find(s => s.equipo_id === eq.id && s.fase === 4);
+        const f2 = scores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "2");
+        const f3 = scores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "3");
+        const f4 = scores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "4");
 
         const s2 = f2?.total !== null && f2?.total !== undefined ? Math.round(Number(f2.total)) : 0;
         const s3 = f3?.total !== null && f3?.total !== undefined ? Math.round(Number(f3.total)) : 0;
@@ -1049,7 +1049,7 @@ function DashboardLayout() {
             {[1, 2, 3, 4].map(p => (
               <button key={p} id={`btn-reset-f${p}`} onClick={() => { if (window.confirm(`¿Reiniciar Fase ${p}? Se borrarán todos los puntajes de F${p} en adelante.`)) resetPhase(p); }} style={{ fontSize: 12, background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset F{p}</button>
             ))}
-            <button id="btn-reset-all" onClick={() => { if (window.confirm("¿Borrar TODO el torneo? Esta acción no se puede deshacer.")) persist(defaultData()); }} style={{ fontSize: 12, background: "#cc0000", color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset Total</button>
+            <button id="btn-reset-all" onClick={async () => { if (window.confirm("¿Borrar TODO el torneo? Esta acción no se puede deshacer.")) { try { await supabase.rpc('reset_torneo'); await persist(defaultData()); } catch(e) { console.error(e); alert("Error al borrar en base de datos."); } } }} style={{ fontSize: 12, background: "#cc0000", color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset Total</button>
             <button id="btn-export-xls" onClick={exportarXLS} style={{ fontSize: 12, background: C.green, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700 }}>📥 Exportar XLS</button>
             <button onClick={() => setAdminOpen(false)} style={{ fontSize: 12, background: C.grayMid, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Cerrar</button>
           </div>

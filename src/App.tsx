@@ -37,24 +37,6 @@ interface AppData {
 }
 interface RankingEntry { id: number; name: string; score: number | null; tiebreak: number | null; sd?: ScoreEntry; }
 
-// ─── JUECES AUTORIZADOS (espejo local del backend) ─────────────────
-// El backend es la fuente de verdad; esto permite UX offline parcial
-// FIX #2: "0000" agregado para el modo Espectador (antes faltaba y el botón fallaba)
-const JUECES_AUTORIZADOS: Record<string, JuezInfo> = {
-  "0000": { nombre: "Espectador", rol: "espectador" },
-  "1001": { nombre: "Alexis Cáceres", rol: "juez" },
-  "1002": { nombre: "Abril Urdaneta", rol: "juez" },
-  "1003": { nombre: "Mirian Echenique", rol: "juez" },
-  "1004": { nombre: "Oscar Alvarado", rol: "juez" },
-  "1005": { nombre: "Jose Marrufo", rol: "juez" },
-  "1006": { nombre: "Jehova Leal", rol: "juez" },
-  "1007": { nombre: "Xioleidy Colmenarez", rol: "juez" },
-  "1008": { nombre: "Mariangela Moreno", rol: "juez" },
-  "1009": { nombre: "Mariangel Rojas", rol: "juez" },
-  "8888": { nombre: "Nuevo Admin", rol: "admin" },
-  "9999": { nombre: "Admin Master", rol: "admin" },
-};
-
 // ─── CONFIGURACIÓN DE FASES ────────────────────────────────────────
 interface FieldOption { label: string; sub: string; value: number; color: string; }
 interface FieldConfig { key: string; label: string; type: "number" | "buttons" | "cards"; opts?: FieldOption[]; }
@@ -221,33 +203,23 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
         .eq("pin", pin)
         .single();
 
-      if (!sbError && juezData) {
-        // Supabase respondió OK
-        const sessionUser: SessionUser = {
-          nombre: juezData.nombre as string,
-          rol: juezData.rol as "juez" | "admin" | "espectador",
-          pin,
-          token: `sb_${Date.now()}`,
-        };
-        setUser(sessionUser);
-        try { sessionStorage.setItem("core2026_session", JSON.stringify(sessionUser)); } catch (_) { }
-        return true;
+      if (sbError || !juezData) {
+        setAuthError("PIN incorrecto o no encontrado.");
+        return false;
       }
 
-      // Fallback: diccionario local si Supabase no responde
-      const localUser = JUECES_AUTORIZADOS[pin];
-      if (localUser) {
-        const fallback: SessionUser = { ...localUser, pin, token: `offline_${Date.now()}`, offline: true };
-        setUser(fallback);
-        try { sessionStorage.setItem("core2026_session", JSON.stringify(fallback)); } catch (_) { }
-        setAuthError("⚠ Modo offline — datos se sincronizarán al reconectar.");
-        return true;
-      }
-
-      setAuthError("PIN inválido. Verifica con el administrador.");
-      return false;
+      // Supabase respondió OK
+      const sessionUser: SessionUser = {
+        nombre: juezData.nombre as string,
+        rol: juezData.rol as "juez" | "admin" | "espectador",
+        pin,
+        token: `sb_${Date.now()}`,
+      };
+      setUser(sessionUser);
+      try { sessionStorage.setItem("core2026_session", JSON.stringify(sessionUser)); } catch (_) { }
+      return true;
     } catch {
-      setAuthError("Error de conexión. Intenta de nuevo.");
+      setAuthError("Error de conexión con la base de datos. Intenta de nuevo.");
       return false;
     } finally {
       setAuthLoading(false);
@@ -467,7 +439,7 @@ function LoginScreen() {
       <div style={{ color: C.white, fontWeight: 900, fontSize: 28, letterSpacing: 2, marginBottom: 4 }}>CORE 2026</div>
       <div style={{ color: C.grayMid, fontSize: 13, marginBottom: 32 }}>Sistema de Arbitraje</div>
 
-      {/* FIX #2: Botón espectador — ahora funciona porque "0000" está en JUECES_AUTORIZADOS */}
+      {/* Botón espectador — PIN público 0000 */}
       <button
         id="btn-espectador"
         onClick={() => login("0000")}

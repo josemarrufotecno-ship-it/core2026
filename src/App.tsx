@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useContext, createContext, useCallback, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 
 // ─── CLIENTE SUPABASE ──────────────────────────────────────────────
 // Variables en .env: VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
@@ -658,80 +658,225 @@ function DashboardLayout() {
   // Exportación XLS (solo admin)
   const exportarXLS = useCallback(async () => {
     try {
-      const [scoresResp, equiposResp] = await Promise.all([
+      const [scoresResp, equiposResp, clasificadosResp] = await Promise.all([
         supabase.from("puntajes").select("*"),
         supabase.from("equipos").select("*"),
+        supabase.from("clasificados").select("*"),
       ]);
       const scores = (scoresResp.data || []) as Array<Record<string, any>>;
       const equipos = (equiposResp.data || []) as Array<Record<string, any>>;
+      const clasificados = (clasificadosResp.data || []) as Array<Record<string, any>>;
 
-      let matrizDatos: any[] = [];
-
-      // 1. Mapeo correcto iterando sobre los equipos
-      equipos.forEach(eq => {
-        const teamScores = scores.filter(s => s.equipo_id === eq.id);
+      // Helper to style worksheet
+      const applyExcelStyles = (ws: any, numericColumns: string[]) => {
+        if (!ws || !ws['!ref']) return;
+        const range = XLSX.utils.decode_range(ws['!ref']);
         
-        if (teamScores.length === 0) {
-          matrizDatos.push({
-            "Equipo": eq.nombre,
-            "fase": 1,
-            "total": 0,
-            "timing": 0,
-            "precision": 0,
-            "parking": 0,
-            "trace1": 0,
-            "trace2": 0,
-            "trace3": 0,
-            "obj1": 0,
-            "obj2": 0,
-            "obj3": 0,
-            "obj4": 0,
-            "obj5": 0,
-            "penalizaciones": 0,
-            "tiebreak": 0
-          });
-        } else {
-          // Extraer todos los valores numéricos solicitados
-          teamScores.forEach(s => {
-            matrizDatos.push({
-              "Equipo": eq.nombre,
-              "fase": Number(s.fase) || 0,
-              "total": Number(s.total) || 0,
-              "timing": Number(s.timing) || 0,
-              "precision": Number(s.precision) || 0,
-              "parking": Number(s.parking) || 0,
-              "trace1": Number(s.trace1) || 0,
-              "trace2": Number(s.trace2) || 0,
-              "trace3": Number(s.trace3) || 0,
-              "obj1": Number(s.obj1) || 0,
-              "obj2": Number(s.obj2) || 0,
-              "obj3": Number(s.obj3) || 0,
-              "obj4": Number(s.obj4) || 0,
-              "obj5": Number(s.obj5) || 0,
-              "penalizaciones": Number(s.penalizaciones) || 0,
-              "tiebreak": Number(s.tiebreak) || 0
-            });
-          });
-        }
-      });
+        // Active auto-filters
+        ws['!autofilter'] = { ref: ws['!ref'] };
 
-      // 3. Ordenamiento de los datos
-      matrizDatos.sort((a, b) => {
-        // Primero: fase ASCENDENTE
-        if (a.fase !== b.fase) {
-          return a.fase - b.fase;
+        const colWidths: number[] = [];
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          colWidths[C] = 10;
         }
-        // Segundo: total DESCENDENTE
-        if (a.total !== b.total) {
-          return b.total - a.total;
+
+        const headers: string[] = [];
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const headerCell = ws[XLSX.utils.encode_cell({ r: 0, c: C })];
+          headers[C] = headerCell ? String(headerCell.v) : "";
         }
-        // Tercero: tiebreak DESCENDENTE
-        return b.tiebreak - a.tiebreak;
-      });
+
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+            const cell = ws[cellRef];
+            if (!cell) continue;
+
+            const valStr = cell.v !== undefined && cell.v !== null ? String(cell.v) : "";
+            if (valStr.length > colWidths[C]) {
+              colWidths[C] = valStr.length;
+            }
+
+            if (R === 0) {
+              // Header styling: bold, light-gray background (#E0E0E0), centered alignment
+              cell.s = {
+                font: { bold: true, color: { rgb: "000000" }, name: "Arial", sz: 11 },
+                fill: { fgColor: { rgb: "E0E0E0" } },
+                alignment: { horizontal: "center", vertical: "center", wrapText: true }
+              };
+            } else {
+              const headerName = headers[C];
+              const isNumeric = numericColumns.includes(headerName);
+
+              cell.s = {
+                font: { name: "Arial", sz: 10 },
+                alignment: { vertical: "center" }
+              };
+
+              if (isNumeric) {
+                cell.s.alignment.horizontal = "center";
+                if (typeof cell.v === "number") {
+                  cell.t = "n";
+                  cell.z = "0"; // integer format
+                  cell.v = Math.round(cell.v);
+                }
+              } else {
+                cell.s.alignment.horizontal = "left";
+              }
+            }
+          }
+        }
+
+        ws['!cols'] = colWidths.map(w => ({ wch: Math.max(w + 3, 12) }));
+      };
 
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(matrizDatos), "Resultados");
-      XLSX.writeFile(wb, `CORE_2026_Resultados_${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+      // Pestaña "Fase_1" (Prueba de Velocidad)
+      const fase1Data = equipos.map(eq => {
+        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 1);
+        return {
+          "EquipoID": eq.id,
+          "Nombre": eq.nombre,
+          "Tiempo": s?.tiempo !== null && s?.tiempo !== undefined ? Math.round(Number(s.tiempo)) : 0,
+          "Juez": s?.juez_nombre || "0",
+          "Timestamp": s?.actualizado_en || "0"
+        };
+      }).sort((a, b) => {
+        const tA = a.Tiempo === 0 ? Infinity : a.Tiempo;
+        const tB = b.Tiempo === 0 ? Infinity : b.Tiempo;
+        return tA - tB;
+      });
+      const wsF1 = XLSX.utils.json_to_sheet(fase1Data);
+      applyExcelStyles(wsF1, ["EquipoID", "Tiempo"]);
+      XLSX.utils.book_append_sheet(wb, wsF1, "Fase_1");
+
+      // Pestaña "Fase_2" (Habilidades de Conducción)
+      const fase2Data = equipos.map(eq => {
+        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 2);
+        return {
+          "EquipoID": eq.id,
+          "Nombre": eq.nombre,
+          "Precision": s?.precision !== null && s?.precision !== undefined ? Math.round(Number(s.precision)) : 0,
+          "Parking": s?.parking !== null && s?.parking !== undefined ? Math.round(Number(s.parking)) : 0,
+          "Timing": s?.timing !== null && s?.timing !== undefined ? Math.round(Number(s.timing)) : 0,
+          "Tiebreak": s?.tiebreak !== null && s?.tiebreak !== undefined ? Math.round(Number(s.tiebreak)) : 0,
+          "Total": s?.total !== null && s?.total !== undefined ? Math.round(Number(s.total)) : 0,
+          "Juez": s?.juez_nombre || "0"
+        };
+      }).sort((a, b) => {
+        if (b.Total !== a.Total) return b.Total - a.Total;
+        return b.Tiebreak - a.Tiebreak;
+      });
+      const wsF2 = XLSX.utils.json_to_sheet(fase2Data);
+      applyExcelStyles(wsF2, ["EquipoID", "Precision", "Parking", "Timing", "Tiebreak", "Total"]);
+      XLSX.utils.book_append_sheet(wb, wsF2, "Fase_2");
+
+      // Pestaña "Fase_3" (Seguidor de Línea)
+      const fase3Data = equipos.map(eq => {
+        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 3);
+        return {
+          "EquipoID": eq.id,
+          "Nombre": eq.nombre,
+          "Trace1": s?.trace1 !== null && s?.trace1 !== undefined ? Math.round(Number(s.trace1)) : 0,
+          "Trace2": s?.trace2 !== null && s?.trace2 !== undefined ? Math.round(Number(s.trace2)) : 0,
+          "Trace3": s?.trace3 !== null && s?.trace3 !== undefined ? Math.round(Number(s.trace3)) : 0,
+          "Tiebreak": s?.tiebreak !== null && s?.tiebreak !== undefined ? Math.round(Number(s.tiebreak)) : 0,
+          "Total": s?.total !== null && s?.total !== undefined ? Math.round(Number(s.total)) : 0,
+          "Juez": s?.juez_nombre || "0"
+        };
+      }).sort((a, b) => {
+        if (b.Total !== a.Total) return b.Total - a.Total;
+        return b.Tiebreak - a.Tiebreak;
+      });
+      const wsF3 = XLSX.utils.json_to_sheet(fase3Data);
+      applyExcelStyles(wsF3, ["EquipoID", "Trace1", "Trace2", "Trace3", "Tiebreak", "Total"]);
+      XLSX.utils.book_append_sheet(wb, wsF3, "Fase_3");
+
+      // Pestaña "Fase_4" (Resolución de Objetivos)
+      const fase4Data = equipos.map(eq => {
+        const s = scores.find(score => score.equipo_id === eq.id && score.fase === 4);
+        return {
+          "EquipoID": eq.id,
+          "Nombre": eq.nombre,
+          "Obj1": s?.obj1 !== null && s?.obj1 !== undefined ? Math.round(Number(s.obj1)) : 0,
+          "Obj2": s?.obj2 !== null && s?.obj2 !== undefined ? Math.round(Number(s.obj2)) : 0,
+          "Obj3": s?.obj3 !== null && s?.obj3 !== undefined ? Math.round(Number(s.obj3)) : 0,
+          "Tiebreak": s?.tiebreak !== null && s?.tiebreak !== undefined ? Math.round(Number(s.tiebreak)) : 0,
+          "Total": s?.total !== null && s?.total !== undefined ? Math.round(Number(s.total)) : 0,
+          "Juez": s?.juez_nombre || "0"
+        };
+      }).sort((a, b) => {
+        if (b.Total !== a.Total) return b.Total - a.Total;
+        return b.Tiebreak - a.Tiebreak;
+      });
+      const wsF4 = XLSX.utils.json_to_sheet(fase4Data);
+      applyExcelStyles(wsF4, ["EquipoID", "Obj1", "Obj2", "Obj3", "Tiebreak", "Total"]);
+      XLSX.utils.book_append_sheet(wb, wsF4, "Fase_4");
+
+      // Pestaña "Clasificados"
+      const clasificadosData = clasificados.map(c => {
+        let equiposList = "[]";
+        try {
+          const ids = Array.isArray(c.equipo_ids) ? c.equipo_ids : JSON.parse(c.equipo_ids || "[]");
+          const names = ids.map((id: number) => {
+            const eq = equipos.find(e => e.id === id);
+            return eq ? `${eq.nombre} (ID: ${id})` : `ID: ${id}`;
+          });
+          equiposList = JSON.stringify(names);
+        } catch (e) {
+          equiposList = String(c.equipo_ids || "[]");
+        }
+
+        return {
+          "Fase": `Fase ${c.fase}`,
+          "EquiposJSON": equiposList,
+          "Timestamp": c.actualizado_en || c.created_at || "0"
+        };
+      }).sort((a, b) => {
+        const fA = parseInt(a.Fase.replace(/\D/g, '')) || 0;
+        const fB = parseInt(b.Fase.replace(/\D/g, '')) || 0;
+        return fA - fB;
+      });
+      const wsClas = XLSX.utils.json_to_sheet(clasificadosData);
+      applyExcelStyles(wsClas, []);
+      XLSX.utils.book_append_sheet(wb, wsClas, "Clasificados");
+
+      // Pestaña "Reporte_Final"
+      const reporteFinalData = equipos.map(eq => {
+        const f2 = scores.find(s => s.equipo_id === eq.id && s.fase === 2);
+        const f3 = scores.find(s => s.equipo_id === eq.id && s.fase === 3);
+        const f4 = scores.find(s => s.equipo_id === eq.id && s.fase === 4);
+
+        const s2 = f2?.total !== null && f2?.total !== undefined ? Math.round(Number(f2.total)) : 0;
+        const s3 = f3?.total !== null && f3?.total !== undefined ? Math.round(Number(f3.total)) : 0;
+        const s4 = f4?.total !== null && f4?.total !== undefined ? Math.round(Number(f4.total)) : 0;
+        const total = s2 + s3 + s4;
+
+        const timestamps = [f2?.actualizado_en, f3?.actualizado_en, f4?.actualizado_en].filter(Boolean);
+        const latestUpdate = timestamps.length > 0 ? timestamps.sort().pop() : "0";
+
+        return {
+          "Posicion": 0,
+          "EquipoID": eq.id,
+          "Nombre": eq.nombre,
+          "F2": s2,
+          "F3": s3,
+          "F4": s4,
+          "Total": total,
+          "Actualizado": latestUpdate
+        };
+      }).sort((a, b) => b.Total - a.Total);
+
+      reporteFinalData.forEach((row, index) => {
+        row.Posicion = index + 1;
+      });
+
+      const wsFinal = XLSX.utils.json_to_sheet(reporteFinalData);
+      applyExcelStyles(wsFinal, ["Posicion", "EquipoID", "F2", "F3", "F4", "Total"]);
+      XLSX.utils.book_append_sheet(wb, wsFinal, "Reporte_Final");
+
+      XLSX.writeFile(wb, "Core 2026.xlsx");
     } catch (err) {
       console.error("Error exportando XLS:", err);
       alert("Error al exportar. Verifica la conexión con Supabase.");

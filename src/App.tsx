@@ -671,7 +671,7 @@ function DashboardLayout() {
       const applyExcelStyles = (ws: any, numericColumns: string[]) => {
         if (!ws || !ws['!ref']) return;
         const range = XLSX.utils.decode_range(ws['!ref']);
-        
+
         // Active auto-filters
         ws['!autofilter'] = { ref: ws['!ref'] };
 

@@ -658,14 +658,13 @@ function DashboardLayout() {
   // Exportación XLS (solo admin)
   const exportarXLS = useCallback(async () => {
     try {
-      const [scoresResp, equiposResp, clasificadosResp] = await Promise.all([
-        supabase.from("puntajes").select("*"),
-        supabase.from("equipos").select("*"),
-        supabase.from("clasificados").select("*"),
-      ]);
-      const scores = (scoresResp.data || []) as Array<Record<string, any>>;
-      const equipos = (equiposResp.data || []) as Array<Record<string, any>>;
-      const clasificados = (clasificadosResp.data || []) as Array<Record<string, any>>;
+      const { data: dbScoresData } = await supabase.from('puntajes').select('*');
+      const { data: dbTeamsData } = await supabase.from('equipos').select('id, nombre');
+      const { data: clasificadosResp } = await supabase.from('clasificados').select('*');
+
+      const dbScores = (dbScoresData || []) as Array<Record<string, any>>;
+      const dbTeams = (dbTeamsData || []) as Array<Record<string, any>>;
+      const clasificados = (clasificadosResp || []) as Array<Record<string, any>>;
 
       // Helper to style worksheet
       const applyExcelStyles = (ws: any, numericColumns: string[]) => {
@@ -733,8 +732,8 @@ function DashboardLayout() {
       const wb = XLSX.utils.book_new();
 
       // Pestaña "Fase_1" (Prueba de Velocidad)
-      const fase1Data = equipos.map(eq => {
-        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "1");
+      const fase1Data = dbTeams.map(eq => {
+        const s = dbScores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "1");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -752,8 +751,8 @@ function DashboardLayout() {
       XLSX.utils.book_append_sheet(wb, wsF1, "Fase_1");
 
       // Pestaña "Fase_2" (Habilidades de Conducción)
-      const fase2Data = equipos.map(eq => {
-        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "2");
+      const fase2Data = dbTeams.map(eq => {
+        const s = dbScores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "2");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -773,8 +772,8 @@ function DashboardLayout() {
       XLSX.utils.book_append_sheet(wb, wsF2, "Fase_2");
 
       // Pestaña "Fase_3" (Seguidor de Línea)
-      const fase3Data = equipos.map(eq => {
-        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "3");
+      const fase3Data = dbTeams.map(eq => {
+        const s = dbScores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "3");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -794,8 +793,8 @@ function DashboardLayout() {
       XLSX.utils.book_append_sheet(wb, wsF3, "Fase_3");
 
       // Pestaña "Fase_4" (Resolución de Objetivos)
-      const fase4Data = equipos.map(eq => {
-        const s = scores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "4");
+      const fase4Data = dbTeams.map(eq => {
+        const s = dbScores.find(score => String(score.equipo_id) === String(eq.id) && String(score.fase) === "4");
         return {
           "EquipoID": eq.id,
           "Nombre": eq.nombre,
@@ -820,7 +819,7 @@ function DashboardLayout() {
         try {
           const ids = Array.isArray(c.equipo_ids) ? c.equipo_ids : JSON.parse(c.equipo_ids || "[]");
           const names = ids.map((id: number) => {
-            const eq = equipos.find(e => String(e.id) === String(id));
+            const eq = dbTeams.find(e => String(e.id) === String(id));
             return eq ? `${eq.nombre} (ID: ${id})` : `ID: ${id}`;
           });
           equiposList = JSON.stringify(names);
@@ -843,10 +842,10 @@ function DashboardLayout() {
       XLSX.utils.book_append_sheet(wb, wsClas, "Clasificados");
 
       // Pestaña "Reporte_Final"
-      const reporteFinalData = equipos.map(eq => {
-        const f2 = scores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "2");
-        const f3 = scores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "3");
-        const f4 = scores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "4");
+      const reporteFinalData = dbTeams.map(eq => {
+        const f2 = dbScores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "2");
+        const f3 = dbScores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "3");
+        const f4 = dbScores.find(s => String(s.equipo_id) === String(eq.id) && String(s.fase) === "4");
 
         const s2 = f2?.total !== null && f2?.total !== undefined ? Math.round(Number(f2.total)) : 0;
         const s3 = f3?.total !== null && f3?.total !== undefined ? Math.round(Number(f3.total)) : 0;
@@ -1049,7 +1048,21 @@ function DashboardLayout() {
             {[1, 2, 3, 4].map(p => (
               <button key={p} id={`btn-reset-f${p}`} onClick={() => { if (window.confirm(`¿Reiniciar Fase ${p}? Se borrarán todos los puntajes de F${p} en adelante.`)) resetPhase(p); }} style={{ fontSize: 12, background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset F{p}</button>
             ))}
-            <button id="btn-reset-all" onClick={async () => { if (window.confirm("¿Borrar TODO el torneo? Esta acción no se puede deshacer.")) { try { await supabase.rpc('reset_torneo'); await persist(defaultData()); } catch(e) { console.error(e); alert("Error al borrar en base de datos."); } } }} style={{ fontSize: 12, background: "#cc0000", color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset Total</button>
+            <button id="btn-reset-all" onClick={async () => {
+              if (window.confirm("¿Borrar TODO el torneo? Esta acción no se puede deshacer.")) {
+                try {
+                  const { error: rpcError } = await supabase.rpc('reset_torneo');
+                  if (rpcError) {
+                    const { error: delError } = await supabase.from('puntajes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                    if (delError) throw delError;
+                  }
+                  await persist(defaultData());
+                } catch(e) {
+                  console.error(e);
+                  alert("Error al borrar en base de datos.");
+                }
+              }
+            }} style={{ fontSize: 12, background: "#cc0000", color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset Total</button>
             <button id="btn-export-xls" onClick={exportarXLS} style={{ fontSize: 12, background: C.green, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700 }}>📥 Exportar XLS</button>
             <button onClick={() => setAdminOpen(false)} style={{ fontSize: 12, background: C.grayMid, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Cerrar</button>
           </div>

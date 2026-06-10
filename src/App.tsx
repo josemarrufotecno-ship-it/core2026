@@ -1079,7 +1079,18 @@ function DashboardLayout() {
               <div key={t.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input defaultValue={t.name} style={{ flex: 1, borderRadius: 8, border: `1.5px solid ${C.grayMid}`, padding: "5px 10px", fontSize: 13 }}
                   onBlur={e => { if (e.target.value !== t.name) persist({ ...data, teams: data.teams.map(x => x.id === t.id ? { ...x, name: e.target.value } : x) }); }} />
-                <button onClick={() => { if (window.confirm(`¿Eliminar "${t.name}"?`)) persist({ ...data, teams: data.teams.filter(x => x.id !== t.id) }); }} style={{ background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}>✕</button>
+                <button onClick={async () => {
+                  if (window.confirm(`¿Eliminar "${t.name}"?`)) {
+                    try {
+                      const { error } = await supabase.from('equipos').delete().eq('id', t.id);
+                      if (error) throw error;
+                      syncFromServer();
+                    } catch (err) {
+                      console.error("Error deleting team", err);
+                      alert("Error al eliminar equipo en Supabase.");
+                    }
+                  }
+                }} style={{ background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}>✕</button>
               </div>
             ))}
           </div>

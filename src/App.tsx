@@ -188,6 +188,19 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthLoading(true);
     setAuthError(null);
     try {
+      // Bypass PIN 0000 para espectadores
+      if (pin === "0000") {
+        const sessionUser: SessionUser = {
+          nombre: "Espectador",
+          rol: "espectador",
+          pin,
+          token: `sb_${Date.now()}`,
+        };
+        setUser(sessionUser);
+        try { sessionStorage.setItem("core2026_session", JSON.stringify(sessionUser)); } catch (_) { }
+        return true;
+      }
+
       // Validar PIN contra tabla jueces en Supabase
       const { data, error } = await supabase
         .from("jueces")
@@ -494,6 +507,20 @@ function LoginScreen() {
 // ═══════════════════════════════════════════════════════════════════
 function PublicLeaderboard({ data }: { data: AppData }) {
   const { logout } = useAuth();
+  const [modo, setModo] = useState<"leaderboard" | "video">("leaderboard");
+
+  useEffect(() => {
+    const fetchModo = async () => {
+      try {
+        const { data: d } = await supabase.from('control_pantalla').select('modo').eq('id', 1).single();
+        if (d) setModo(d.modo);
+      } catch (e) {}
+    };
+    fetchModo();
+    const interval = setInterval(fetchModo, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
   const accumulated = [...data.teams]
     .map(t => ({
       ...t,
@@ -503,6 +530,14 @@ function PublicLeaderboard({ data }: { data: AppData }) {
     }))
     .map(t => ({ ...t, total: +(t.s2 + t.s3 + t.s4).toFixed(2) }))
     .sort((a, b) => b.total - a.total);
+
+  if (modo === "video") {
+    return (
+      <div style={{ background: C.dark, minHeight: "100vh", overflow: "hidden" }}>
+        <video src="/promo-tecno.mp4" autoPlay loop muted playsInline preload="auto" style={{ width: '100vw', height: '100vh', objectFit: 'cover' }}></video>
+      </div>
+    );
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: C.dark, fontFamily: "system-ui, sans-serif", padding: "1rem" }}>
@@ -939,11 +974,31 @@ function DashboardLayout() {
   };
 
   const resetPhase = async (p: number) => {
-    const ns = { ...data.scores };
-    Object.keys(ns).filter(k => k.startsWith(`${p}_`)).forEach(k => delete ns[k]);
-    const nq = { ...data.qualified };
-    for (let i = p; i <= 4; i++) delete nq[`p${i + 1}`];
-    await persist({ ...data, scores: ns, qualified: nq });
+    try {
+      let updatePayload: any = {};
+      if (p === 1) {
+        updatePayload = { tiempo: null, total: 0 };
+      } else if (p === 2) {
+        updatePayload = { precision: 0, parking: 0, timing: 0, tiebreak: 0, total: 0 };
+      } else if (p === 3) {
+        updatePayload = { trace1: 0, trace2: 0, trace3: 0, tiebreak: 0, total: 0 };
+      } else if (p === 4) {
+        updatePayload = { obj1: 0, obj2: 0, obj3: 0, tiebreak: 0, total: 0 };
+      }
+      
+      const { error } = await supabase.from('puntajes').update(updatePayload).eq('fase', p);
+      if (error) throw error;
+      
+      const ns = { ...data.scores };
+      Object.keys(ns).filter(k => k.startsWith(`${p}_`)).forEach(k => delete ns[k]);
+      const nq = { ...data.qualified };
+      for (let i = p; i <= 4; i++) delete nq[`p${i + 1}`];
+      await persist({ ...data, scores: ns, qualified: nq });
+      syncFromServer();
+    } catch (err) {
+      console.error("Error al hacer reset en fase", p, err);
+      alert("Error al resetear la fase en Supabase.");
+    }
   };
 
   const phaseUnlocked = (p: number) => p === 1 || (data.qualified[`p${p}`]?.length > 0);
@@ -1009,6 +1064,11 @@ function DashboardLayout() {
         <div style={{ background: "#e8eaf6", borderBottom: `3px solid ${C.purple}`, padding: "12px 18px" }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: C.purple }}>🔓 Panel Admin — {user?.nombre}</span>
+            <div style={{ display: "flex", gap: 4, background: C.white, padding: "4px", borderRadius: 8, border: `1px solid ${C.purple}55` }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.textSub, padding: "0 4px", display: "flex", alignItems: "center" }}>Control Proyección:</span>
+              <button onClick={async () => { await supabase.from('control_pantalla').update({ modo: 'video' }).eq('id', 1); }} style={{ fontSize: 11, background: C.dark, color: C.white, border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>🎬 Publicidad</button>
+              <button onClick={async () => { await supabase.from('control_pantalla').update({ modo: 'leaderboard' }).eq('id', 1); }} style={{ fontSize: 11, background: C.purple, color: C.white, border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>🏆 Resultados</button>
+            </div>
             <button id="btn-manage-teams" onClick={() => setManageTeams(!manageTeams)} style={{ fontSize: 12, background: C.blue, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>👥 Equipos</button>
             {[1, 2, 3, 4].map(p => (
               <button key={p} id={`btn-reset-f${p}`} onClick={() => { if (window.confirm(`¿Reiniciar Fase ${p}? Se borrarán todos los puntajes de F${p} en adelante.`)) resetPhase(p); }} style={{ fontSize: 12, background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset F{p}</button>

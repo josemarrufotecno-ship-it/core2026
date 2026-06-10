@@ -644,14 +644,22 @@ function DashboardLayout() {
     return () => clearInterval(iv);
   }, [syncFromServer]);
 
-  // Realtime: actualizar en todos los dispositivos cuando un juez guarda
+  // Realtime: actualizar en todos los dispositivos (equipos y puntajes)
   useEffect(() => {
     const channel = supabase
-      .channel("puntajes_changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "puntajes" }, () => {
-        syncFromServer();
-      })
+      .channel("schema-db-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "equipos" },
+        () => syncFromServer()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "puntajes" },
+        () => syncFromServer()
+      )
       .subscribe();
+
     return () => { supabase.removeChannel(channel); };
   }, [syncFromServer]);
 

@@ -188,25 +188,18 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      // Espectador público — no requiere validación
-      if (pin === "0000") {
-        const spectator: SessionUser = { nombre: "Espectador", rol: "espectador", pin: "0000", token: "public" };
-        setUser(spectator);
-        try { sessionStorage.setItem("core2026_session", JSON.stringify(spectator)); } catch (_) { }
-        return true;
-      }
-
       // Validar PIN contra tabla jueces en Supabase
-      const { data: juezData, error: sbError } = await supabase
+      const { data, error } = await supabase
         .from("jueces")
         .select("nombre, rol")
-        .eq("pin", pin)
-        .single();
+        .eq("pin", pin);
 
-      if (sbError || !juezData) {
-        setAuthError("PIN incorrecto o no encontrado.");
+      if (error || !data || data.length === 0) {
+        setAuthError("PIN incorrecto");
         return false;
       }
+
+      const juezData = data[0];
 
       // Supabase respondió OK
       const sessionUser: SessionUser = {
@@ -1052,19 +1045,33 @@ function DashboardLayout() {
               onChange={e => setNewTeamName(e.target.value)}
               placeholder="Nombre del equipo…"
               style={{ flex: 1, borderRadius: 8, border: `1.5px solid ${C.purple}`, padding: "7px 12px" }}
-              onKeyDown={e => {
+              onKeyDown={async e => {
                 if (e.key === "Enter" && newTeamName.trim()) {
-                  const mx = Math.max(0, ...data.teams.map(t => t.id));
-                  persist({ ...data, teams: [...data.teams, { id: mx + 1, name: newTeamName.trim() }] });
-                  setNewTeamName("");
+                  const trimmed = newTeamName.trim();
+                  try {
+                    const { error } = await supabase.from('equipos').insert([{ nombre: trimmed }]);
+                    if (error) throw error;
+                    setNewTeamName("");
+                    syncFromServer();
+                  } catch (err) {
+                    console.error("Error adding team", err);
+                    alert("Error al agregar equipo en Supabase.");
+                  }
                 }
               }}
             />
-            <button onClick={() => {
-              if (!newTeamName.trim()) return;
-              const mx = Math.max(0, ...data.teams.map(t => t.id));
-              persist({ ...data, teams: [...data.teams, { id: mx + 1, name: newTeamName.trim() }] });
-              setNewTeamName("");
+            <button onClick={async () => {
+              const trimmed = newTeamName.trim();
+              if (!trimmed) return;
+              try {
+                const { error } = await supabase.from('equipos').insert([{ nombre: trimmed }]);
+                if (error) throw error;
+                setNewTeamName("");
+                syncFromServer();
+              } catch (err) {
+                console.error("Error adding team", err);
+                alert("Error al agregar equipo en Supabase.");
+              }
             }} style={{ background: C.purple, color: C.white, border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 700, cursor: "pointer" }}>+ Agregar</button>
           </div>
           <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>

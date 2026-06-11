@@ -525,13 +525,13 @@ function PublicLeaderboard({ data }: { data: AppData }) {
       try {
         const { data: d } = await supabase.from('control_pantalla').select('modo').eq('id', 1).single();
         if (d) setModo(d.modo);
-      } catch (e) {}
+      } catch (e) { }
     };
     const fetchPremios = async () => {
       try {
         const { data: d } = await supabase.from('premios').select('*').eq('id', 1).single();
         if (d) setPremios({ premio_maker_equipo_id: d.premio_maker_equipo_id, premio_codigo_equipo_id: d.premio_codigo_equipo_id });
-      } catch (e) {}
+      } catch (e) { }
     };
     fetchModo();
     fetchPremios();
@@ -1125,10 +1125,10 @@ function DashboardLayout() {
       } else if (p === 4) {
         updatePayload = { obj1: 0, obj2: 0, obj3: 0, tiebreak: 0, total: 0 };
       }
-      
+
       const { error } = await supabase.from('puntajes').update(updatePayload).eq('fase', p);
       if (error) throw error;
-      
+
       const ns = { ...data.scores };
       Object.keys(ns).filter(k => k.startsWith(`${p}_`)).forEach(k => delete ns[k]);
       const nq = { ...data.qualified };

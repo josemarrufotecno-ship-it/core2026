@@ -545,18 +545,22 @@ function PublicLeaderboard({ data }: { data: AppData }) {
         <div style={{ color: C.white, fontWeight: 800, fontSize: 22 }}>🏆 Leaderboard CORE 2026</div>
         <button onClick={logout} style={{ background: "transparent", border: `1px solid ${C.grayMid}55`, color: C.grayMid, borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer" }}>Salir</button>
       </div>
-      {accumulated.map((t, i) => (
-        <div key={t.id} style={{ background: i < 3 ? `${[C.green, C.blue, C.purple][i]}22` : "#252540", border: `2px solid ${i < 3 ? [C.green, C.blue, C.purple][i] : "#3A3A5E"}`, borderRadius: 14, padding: "14px 18px", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: i < 3 ? [C.green, C.blue, C.purple][i] : "#3A3A5E", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
-            {i < 3 ? ["🥇", "🥈", "🥉"][i] : <span style={{ color: C.grayMid, fontWeight: 700 }}>{i + 1}</span>}
-          </div>
-          <div style={{ flex: 1, color: C.white, fontWeight: 700, fontSize: 15 }}>{t.name}</div>
-          <div style={{ display: "flex", gap: 10, fontSize: 12, color: C.grayMid }}>
-            <span>F2:{t.s2 || "–"}</span><span>F3:{t.s3 || "–"}</span><span>F4:{t.s4 || "–"}</span>
-          </div>
-          <div style={{ color: i < 3 ? [C.green, C.blue, C.purple][i] : C.white, fontWeight: 900, fontSize: 22 }}>{t.total || "–"}</div>
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ minWidth: 500, paddingBottom: "10px" }}>
+          {accumulated.map((t, i) => (
+            <div key={t.id} style={{ background: i < 3 ? `${[C.green, C.blue, C.purple][i]}22` : "#252540", border: `2px solid ${i < 3 ? [C.green, C.blue, C.purple][i] : "#3A3A5E"}`, borderRadius: 14, padding: "14px 18px", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: i < 3 ? [C.green, C.blue, C.purple][i] : "#3A3A5E", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                {i < 3 ? ["🥇", "🥈", "🥉"][i] : <span style={{ color: C.grayMid, fontWeight: 700 }}>{i + 1}</span>}
+              </div>
+              <div style={{ flex: 1, color: C.white, fontWeight: 700, fontSize: 15 }}>{t.name}</div>
+              <div style={{ display: "flex", gap: 10, fontSize: 12, color: C.grayMid }}>
+                <span>F2:{t.s2 || "–"}</span><span>F3:{t.s3 || "–"}</span><span>F4:{t.s4 || "–"}</span>
+              </div>
+              <div style={{ color: i < 3 ? [C.green, C.blue, C.purple][i] : C.white, fontWeight: 900, fontSize: 22 }}>{t.total || "–"}</div>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
     </div>
   );
 }
@@ -578,6 +582,7 @@ function DashboardLayout() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [manageTeams, setManageTeams] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // load() — solo lee localStorage, instantáneo sin red
   const load = useCallback(() => {
@@ -600,7 +605,7 @@ function DashboardLayout() {
 
       setData(prev => {
         if (!prev) return prev;
-        const newScores = { ...prev.scores };
+        const newScores: Record<string, ScoreEntry> = {};
         (scoresRaw as any[]).forEach(row => {
           const key = `${row.fase}_${row.equipo_id}`;
           newScores[key] = {
@@ -618,13 +623,11 @@ function DashboardLayout() {
             judge: row.juez_nombre as string,
           } as ScoreEntry;
         });
-        const newQualified = { ...prev.qualified };
+        const newQualified: Record<string, number[]> = {};
         (clasificadosRaw as any[]).forEach(row => {
           newQualified[`p${row.fase}`] = row.equipo_ids as number[];
         });
-        const teams = equiposRaw.length > 0
-          ? equiposRaw.map((e: Record<string, unknown>) => ({ id: e.id as number, name: e.nombre as string }))
-          : prev.teams;
+        const teams = equiposRaw.map((e: Record<string, unknown>) => ({ id: e.id as number, name: e.nombre as string }));
         const updated = { ...prev, scores: newScores, qualified: newQualified, teams, lastUpdated: new Date().toISOString() };
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); } catch (_) { }
         return updated;
@@ -948,6 +951,20 @@ function DashboardLayout() {
       setTimeout(() => setSaveMsg(""), 3000);
       return;
     }
+    const max = phaseConfig[phase].max;
+    for (const f of phaseConfig[phase].fields) {
+      if (f.type === "number" && f.key !== "tiebreak") {
+        const v = parseFloat(String(form[f.key]));
+        if (v < 0) {
+          alert(`Error: El valor de ${f.label} no puede ser negativo.`);
+          return;
+        }
+        if (max && v > max) {
+          alert(`Error: El valor de ${f.label} no puede ser mayor a ${max}.`);
+          return;
+        }
+      }
+    }
     const key = `${phase}_${scoringId}`;
     const payload: ScoreEntry = { ...form, judge: user?.nombre, ts: new Date().toISOString() };
 
@@ -964,24 +981,33 @@ function DashboardLayout() {
   };
 
   const doQualify = async (fromPhase: number) => {
-    const rnk = getRankings(data, fromPhase);
-    const scored = rnk.filter(r => r.score != null);
-    let ids: number[];
-    if (fromPhase === 1) {
-      ids = scored.map(r => r.id); // TODOS los evaluados pasan
-    } else {
-      const cfg = phaseConfig[fromPhase];
-      const pool = data.qualified[`p${fromPhase}`] || [];
-      const cut = Math.max(1, Math.ceil(pool.length * (cfg.cutPercent ?? 0.5)));
-      ids = scored.slice(0, cut).map(r => r.id);
+    setIsProcessing(true);
+    try {
+      const rnk = getRankings(data, fromPhase);
+      const scored = rnk.filter(r => r.score != null);
+      let ids: number[];
+      if (fromPhase === 1) {
+        ids = scored.map(r => r.id); // TODOS los evaluados pasan
+      } else {
+        const cfg = phaseConfig[fromPhase];
+        const pool = data.qualified[`p${fromPhase}`] || [];
+        const cut = Math.max(1, Math.ceil(pool.length * (cfg.cutPercent ?? 0.5)));
+        ids = scored.slice(0, cut).map(r => r.id);
+      }
+      const ok = await qualifyAPI(fromPhase + 1, ids);
+      if (!ok) throw new Error("API falló");
+      const nd: AppData = { ...data, qualified: { ...data.qualified, [`p${fromPhase + 1}`]: ids } };
+      await persist(nd);
+      setConfirmPhase(null);
+    } catch (err) {
+      alert("Error: No se pudo conectar a la base de datos. Verifique su red.");
+    } finally {
+      setIsProcessing(false);
     }
-    qualifyAPI(fromPhase + 1, ids);
-    const nd: AppData = { ...data, qualified: { ...data.qualified, [`p${fromPhase + 1}`]: ids } };
-    await persist(nd);
-    setConfirmPhase(null);
   };
 
   const resetPhase = async (p: number) => {
+    setIsProcessing(true);
     try {
       let updatePayload: any = {};
       if (p === 1) {
@@ -1005,7 +1031,9 @@ function DashboardLayout() {
       syncFromServer();
     } catch (err) {
       console.error("Error al hacer reset en fase", p, err);
-      alert("Error al resetear la fase en Supabase.");
+      alert("Error: No se pudo conectar a la base de datos. Verifique su red.");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -1081,21 +1109,38 @@ function DashboardLayout() {
             {[1, 2, 3, 4].map(p => (
               <button key={p} id={`btn-reset-f${p}`} onClick={() => { if (window.confirm(`¿Reiniciar Fase ${p}? Se borrarán todos los puntajes de F${p} en adelante.`)) resetPhase(p); }} style={{ fontSize: 12, background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset F{p}</button>
             ))}
-            <button id="btn-reset-all" onClick={async () => {
-              if (window.confirm("¿Borrar TODO el torneo? Esta acción no se puede deshacer.")) {
-                try {
-                  const { error: rpcError } = await supabase.rpc('reset_torneo');
-                  if (rpcError) {
-                    const { error: delError } = await supabase.from('puntajes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-                    if (delError) throw delError;
-                  }
-                  await persist(defaultData());
-                } catch(e) {
-                  console.error(e);
-                  alert("Error al borrar en base de datos.");
-                }
+            <button id="btn-reset-all" disabled={isProcessing} onClick={async () => {
+              const confirmReset = window.confirm(
+                "⚠️ PELIGRO: Esto borrará todos los puntajes, eliminará todos los equipos y desconectará a los evaluadores. Solo quedarán 3 equipos por defecto. ¿Continuar?"
+              );
+              if (!confirmReset) return;
+
+              setIsProcessing(true);
+              try {
+                // 1. Ejecutar la transacción global en la base de datos
+                const { error } = await supabase.rpc('reset_torneo_completo');
+                if (error) throw error;
+
+                // 2. Limpiar la sesión del evaluador/usuario actual
+                localStorage.removeItem('evaluator_session');
+                localStorage.removeItem('juez_activo');
+                localStorage.removeItem(STORAGE_KEY);
+                try { sessionStorage.removeItem('core2026_session'); } catch (_) { }
+
+                // 3. Forzar un refresco del estado local basado en la nueva realidad de la DB
+                await syncFromServer();
+
+                alert("Reset completado. El torneo ha sido reiniciado a 3 equipos.");
+
+                // 4. Recargar la página para expulsar estado fantasma en todas las vistas
+                window.location.reload();
+              } catch (e) {
+                console.error("Error crítico durante el reset:", e);
+                alert("Error de conexión: No se pudo completar el reset global. Verifique su red.");
+              } finally {
+                setIsProcessing(false);
               }
-            }} style={{ fontSize: 12, background: "#cc0000", color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset Total</button>
+            }} style={{ fontSize: 12, background: isProcessing ? C.grayMid : "#cc0000", color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: isProcessing ? "not-allowed" : "pointer" }}>{isProcessing ? "⏳" : "Reset Total"}</button>
             <button id="btn-export-xls" onClick={exportarXLS} style={{ fontSize: 12, background: C.green, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700 }}>📥 Exportar XLS</button>
             <button onClick={() => setAdminOpen(false)} style={{ fontSize: 12, background: C.grayMid, color: C.dark, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Cerrar</button>
           </div>
@@ -1128,9 +1173,10 @@ function DashboardLayout() {
                 }
               }}
             />
-            <button onClick={async () => {
+            <button disabled={isProcessing} onClick={async () => {
               const trimmed = newTeamName.trim();
               if (!trimmed) return;
+              setIsProcessing(true);
               try {
                 const { error } = await supabase.from('equipos').insert([{ nombre: trimmed }]);
                 if (error) throw error;
@@ -1138,27 +1184,32 @@ function DashboardLayout() {
                 syncFromServer();
               } catch (err) {
                 console.error("Error adding team", err);
-                alert("Error al agregar equipo en Supabase.");
+                alert("Error: No se pudo conectar a la base de datos. Verifique su red.");
+              } finally {
+                setIsProcessing(false);
               }
-            }} style={{ background: C.purple, color: C.white, border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 700, cursor: "pointer" }}>+ Agregar</button>
+            }} style={{ background: isProcessing ? C.grayMid : C.purple, color: C.white, border: "none", borderRadius: 8, padding: "7px 16px", fontWeight: 700, cursor: isProcessing ? "not-allowed" : "pointer" }}>{isProcessing ? "Procesando..." : "+ Agregar"}</button>
           </div>
           <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
             {data.teams.map(t => (
               <div key={t.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input defaultValue={t.name} style={{ flex: 1, borderRadius: 8, border: `1.5px solid ${C.grayMid}`, padding: "5px 10px", fontSize: 13 }}
                   onBlur={e => { if (e.target.value !== t.name) persist({ ...data, teams: data.teams.map(x => x.id === t.id ? { ...x, name: e.target.value } : x) }); }} />
-                <button onClick={async () => {
+                <button disabled={isProcessing} onClick={async () => {
                   if (window.confirm(`¿Eliminar "${t.name}"?`)) {
+                    setIsProcessing(true);
                     try {
                       const { error } = await supabase.from('equipos').delete().eq('id', t.id);
                       if (error) throw error;
                       syncFromServer();
                     } catch (err) {
                       console.error("Error deleting team", err);
-                      alert("Error al eliminar equipo en Supabase.");
+                      alert("Error: No se pudo conectar a la base de datos. Verifique su red.");
+                    } finally {
+                      setIsProcessing(false);
                     }
                   }
-                }} style={{ background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}>✕</button>
+                }} style={{ background: isProcessing ? C.grayMid : C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 10px", cursor: isProcessing ? "not-allowed" : "pointer" }}>{isProcessing ? "⏳" : "✕"}</button>
               </div>
             ))}
           </div>
@@ -1201,22 +1252,26 @@ function DashboardLayout() {
             {/* Acumulado */}
             <div style={{ background: C.white, borderRadius: 16, padding: "14px 16px", marginBottom: 14 }}>
               <div style={{ fontWeight: 800, fontSize: 15, color: C.dark, marginBottom: 12 }}>🏆 Acumulado (F2+F3+F4)</div>
-              {[...data.teams]
-                .map(t => ({ ...t, s2: calcScore(2, data.scores[`2_${t.id}`]) || 0, s3: calcScore(3, data.scores[`3_${t.id}`]) || 0, s4: calcScore(4, data.scores[`4_${t.id}`]) || 0 }))
-                .map(t => ({ ...t, total: +(t.s2 + t.s3 + t.s4).toFixed(2) }))
-                .sort((a, b) => b.total - a.total)
-                .map((t, i) => (
-                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.gray}` }}>
-                    <div style={{ width: 26, height: 26, borderRadius: 8, background: i < 3 ? [C.green, C.blue, C.purple][i] : C.gray, display: "flex", alignItems: "center", justifyContent: "center", color: i < 3 ? C.white : C.textSub, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</div>
-                    <div style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{t.name}</div>
-                    <div style={{ display: "flex", gap: 8, fontSize: 12, color: C.textSub }}>
-                      <span style={{ color: PHASE_COLOR[2] }}>F2:{t.s2 || "–"}</span>
-                      <span style={{ color: PHASE_COLOR[3] }}>F3:{t.s3 || "–"}</span>
-                      <span style={{ color: PHASE_COLOR[4] }}>F4:{t.s4 || "–"}</span>
-                    </div>
-                    <div style={{ fontWeight: 800, fontSize: 16, color: C.dark, minWidth: 36, textAlign: "right" }}>{t.total || "–"}</div>
-                  </div>
-                ))}
+              <div style={{ overflowX: "auto" }}>
+                <div style={{ minWidth: 400, paddingBottom: 8 }}>
+                  {[...data.teams]
+                    .map(t => ({ ...t, s2: calcScore(2, data.scores[`2_${t.id}`]) || 0, s3: calcScore(3, data.scores[`3_${t.id}`]) || 0, s4: calcScore(4, data.scores[`4_${t.id}`]) || 0 }))
+                    .map(t => ({ ...t, total: +(t.s2 + t.s3 + t.s4).toFixed(2) }))
+                    .sort((a, b) => b.total - a.total)
+                    .map((t, i) => (
+                      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.gray}` }}>
+                        <div style={{ width: 26, height: 26, borderRadius: 8, background: i < 3 ? [C.green, C.blue, C.purple][i] : C.gray, display: "flex", alignItems: "center", justifyContent: "center", color: i < 3 ? C.white : C.textSub, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</div>
+                        <div style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{t.name}</div>
+                        <div style={{ display: "flex", gap: 8, fontSize: 12, color: C.textSub }}>
+                          <span style={{ color: PHASE_COLOR[2] }}>F2:{t.s2 || "–"}</span>
+                          <span style={{ color: PHASE_COLOR[3] }}>F3:{t.s3 || "–"}</span>
+                          <span style={{ color: PHASE_COLOR[4] }}>F4:{t.s4 || "–"}</span>
+                        </div>
+                        <div style={{ fontWeight: 800, fontSize: 16, color: C.dark, minWidth: 36, textAlign: "right" }}>{t.total || "–"}</div>
+                      </div>
+                    ))}
+                </div>
+              </div>
             </div>
             {data.lastUpdated && <div style={{ fontSize: 11, color: C.textSub, textAlign: "right" }}>Actualizado: {new Date(data.lastUpdated).toLocaleTimeString("es")}</div>}
           </div>
@@ -1350,7 +1405,7 @@ function DashboardLayout() {
 
                     {field.type === "number" && (
                       <div>
-                        <input id={`input-${field.key}`} type="number" min={0} step="0.01" value={form[field.key] as number ?? ""} onChange={e => setForm(f => ({ ...f, [field.key]: e.target.value }))}
+                        <input id={`input-${field.key}`} type="number" min="0" max={phaseConfig[phase].max || undefined} step="0.01" value={form[field.key] as number ?? ""} onChange={e => setForm(f => ({ ...f, [field.key]: e.target.value }))}
                           placeholder="0.00" style={{ width: "100%", border: `2px solid ${PHASE_COLOR[phase]}`, borderRadius: 14, padding: "14px 16px", fontSize: 22, fontWeight: 700, color: C.dark, boxSizing: "border-box", textAlign: "center" }} />
                         {field.key === "tiebreak" && (
                           <div style={{ fontSize: 11, color: C.blue, marginTop: 6, textAlign: "center" }}>

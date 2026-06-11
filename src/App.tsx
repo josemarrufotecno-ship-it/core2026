@@ -10,9 +10,16 @@ import * as XLSX from "xlsx-js-style";
 // ─── CLIENTE SUPABASE ──────────────────────────────────────────────
 // Variables en .env: VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY
 // En Vercel: añadir las mismas en Project Settings → Environment Variables
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('⚠ Faltan variables de entorno de Supabase (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)');
+}
+
 const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL as string,
-  import.meta.env.VITE_SUPABASE_ANON_KEY as string
+  supabaseUrl as string,
+  supabaseKey as string
 );
 
 const C = {

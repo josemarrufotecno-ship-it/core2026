@@ -269,12 +269,22 @@ function useSupabaseAPI() {
   ): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
+    // Helper: convierte un valor a número si no es null/undefined/vacío; acepta 0 explícitamente
+    const safeNum = (v: unknown): number => {
+      if (v === null || v === undefined || v === "") return 0;
+      return parseFloat(String(v));
+    };
+    const safeNumOrNull = (v: unknown): number | null => {
+      if (v === null || v === undefined || v === "") return null;
+      return parseFloat(String(v));
+    };
+
     try {
       let total = 0;
-      if (fase === 1) total = parseFloat(String(scoreData.time || 0));
-      if (fase === 2) total = parseFloat(String(scoreData.precision || 0)) + parseFloat(String(scoreData.parking || 0)) + parseFloat(String(scoreData.timing || 0));
-      if (fase === 3) total = parseFloat(String(scoreData.trace1 || 0)) + parseFloat(String(scoreData.trace2 || 0)) + parseFloat(String(scoreData.trace3 || 0));
-      if (fase === 4) total = parseFloat(String(scoreData.obj1 || 0)) + parseFloat(String(scoreData.obj2 || 0)) + parseFloat(String(scoreData.obj3 || 0));
+      if (fase === 1) total = safeNum(scoreData.time);
+      if (fase === 2) total = safeNum(scoreData.precision) + safeNum(scoreData.parking) + safeNum(scoreData.timing);
+      if (fase === 3) total = safeNum(scoreData.trace1) + safeNum(scoreData.trace2) + safeNum(scoreData.trace3);
+      if (fase === 4) total = safeNum(scoreData.obj1) + safeNum(scoreData.obj2) + safeNum(scoreData.obj3);
 
       const { error: sbError } = await supabase
         .from("puntajes")
@@ -283,17 +293,17 @@ function useSupabaseAPI() {
           fase,
           juez_nombre: user?.nombre || "Desconocido",
           total: Math.round(total * 100) / 100,
-          tiebreak: scoreData.tiebreak ? parseFloat(String(scoreData.tiebreak)) : null,
-          tiempo: scoreData.time ? parseFloat(String(scoreData.time)) : null,
-          precision: scoreData.precision ? parseFloat(String(scoreData.precision)) : null,
-          parking: scoreData.parking ? parseFloat(String(scoreData.parking)) : null,
-          timing: scoreData.timing ? parseFloat(String(scoreData.timing)) : null,
-          trace1: scoreData.trace1 ? parseFloat(String(scoreData.trace1)) : null,
-          trace2: scoreData.trace2 ? parseFloat(String(scoreData.trace2)) : null,
-          trace3: scoreData.trace3 ? parseFloat(String(scoreData.trace3)) : null,
-          obj1: scoreData.obj1 ? parseFloat(String(scoreData.obj1)) : null,
-          obj2: scoreData.obj2 ? parseFloat(String(scoreData.obj2)) : null,
-          obj3: scoreData.obj3 ? parseFloat(String(scoreData.obj3)) : null,
+          tiebreak: safeNumOrNull(scoreData.tiebreak),
+          tiempo: safeNumOrNull(scoreData.time),
+          precision: safeNumOrNull(scoreData.precision),
+          parking: safeNumOrNull(scoreData.parking),
+          timing: safeNumOrNull(scoreData.timing),
+          trace1: safeNumOrNull(scoreData.trace1),
+          trace2: safeNumOrNull(scoreData.trace2),
+          trace3: safeNumOrNull(scoreData.trace3),
+          obj1: safeNumOrNull(scoreData.obj1),
+          obj2: safeNumOrNull(scoreData.obj2),
+          obj3: safeNumOrNull(scoreData.obj3),
         }, { onConflict: "equipo_id,fase" });
 
       if (sbError) throw sbError;
@@ -508,6 +518,7 @@ function LoginScreen() {
 function PublicLeaderboard({ data }: { data: AppData }) {
   const { logout } = useAuth();
   const [modo, setModo] = useState<"leaderboard" | "video">("leaderboard");
+  const [premios, setPremios] = useState<{ premio_maker_equipo_id: number | null; premio_codigo_equipo_id: number | null }>({ premio_maker_equipo_id: null, premio_codigo_equipo_id: null });
 
   useEffect(() => {
     const fetchModo = async () => {
@@ -516,20 +527,43 @@ function PublicLeaderboard({ data }: { data: AppData }) {
         if (d) setModo(d.modo);
       } catch (e) {}
     };
+    const fetchPremios = async () => {
+      try {
+        const { data: d } = await supabase.from('premios').select('*').eq('id', 1).single();
+        if (d) setPremios({ premio_maker_equipo_id: d.premio_maker_equipo_id, premio_codigo_equipo_id: d.premio_codigo_equipo_id });
+      } catch (e) {}
+    };
     fetchModo();
-    const interval = setInterval(fetchModo, 2000);
+    fetchPremios();
+    const interval = setInterval(() => { fetchModo(); fetchPremios(); }, 3000);
     return () => clearInterval(interval);
   }, []);
+
+  // Helper: muestra 0 como "0", solo null/undefined como "–"
+  const displayScore = (v: number | null): string => v != null ? String(v) : "–";
 
   const accumulated = [...data.teams]
     .map(t => ({
       ...t,
-      s2: calcScore(2, data.scores[`2_${t.id}`]) || 0,
-      s3: calcScore(3, data.scores[`3_${t.id}`]) || 0,
-      s4: calcScore(4, data.scores[`4_${t.id}`]) || 0,
+      s2: calcScore(2, data.scores[`2_${t.id}`]) ?? 0,
+      s3: calcScore(3, data.scores[`3_${t.id}`]) ?? 0,
+      s4: calcScore(4, data.scores[`4_${t.id}`]) ?? 0,
     }))
     .map(t => ({ ...t, total: +(t.s2 + t.s3 + t.s4).toFixed(2) }))
     .sort((a, b) => b.total - a.total);
+
+  // Vehículo Más Veloz: menor tiempo válido (> 0) en Fase 1
+  const f1Rankings = getRankings(data, 1).filter(r => r.score != null && r.score > 0);
+  const fastest = f1Rankings.length > 0 ? f1Rankings[0] : null;
+
+  // Premios manuales
+  const makerTeam = premios.premio_maker_equipo_id != null ? data.teams.find(t => t.id === premios.premio_maker_equipo_id) : null;
+  const codigoTeam = premios.premio_codigo_equipo_id != null ? data.teams.find(t => t.id === premios.premio_codigo_equipo_id) : null;
+
+  // Colores podio
+  const podiumColors = ["#FFD700", "#C0C0C0", "#CD7F32"]; // Oro, Plata, Bronce
+  const podiumBg = ["#FFD70018", "#C0C0C018", "#CD7F3218"];
+  const podiumLabels = ["🥇 1er Lugar", "🥈 2do Lugar", "🥉 3er Lugar"];
 
   if (modo === "video") {
     return (
@@ -548,17 +582,73 @@ function PublicLeaderboard({ data }: { data: AppData }) {
       <div style={{ overflowX: "auto" }}>
         <div style={{ minWidth: 500, paddingBottom: "10px" }}>
           {accumulated.map((t, i) => (
-            <div key={t.id} style={{ background: i < 3 ? `${[C.green, C.blue, C.purple][i]}22` : "#252540", border: `2px solid ${i < 3 ? [C.green, C.blue, C.purple][i] : "#3A3A5E"}`, borderRadius: 14, padding: "14px 18px", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: i < 3 ? [C.green, C.blue, C.purple][i] : "#3A3A5E", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+            <div key={t.id} style={{
+              background: i < 3 ? podiumBg[i] : "#252540",
+              border: `2px solid ${i < 3 ? podiumColors[i] : "#3A3A5E"}`,
+              borderRadius: 14, padding: "14px 18px", marginBottom: 10,
+              display: "flex", alignItems: "center", gap: 14,
+              boxShadow: i < 3 ? `0 0 20px ${podiumColors[i]}33` : "none",
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: i < 3 ? podiumColors[i] : "#3A3A5E", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
                 {i < 3 ? ["🥇", "🥈", "🥉"][i] : <span style={{ color: C.grayMid, fontWeight: 700 }}>{i + 1}</span>}
               </div>
-              <div style={{ flex: 1, color: C.white, fontWeight: 700, fontSize: 15 }}>{t.name}</div>
-              <div style={{ display: "flex", gap: 10, fontSize: 12, color: C.grayMid }}>
-                <span>F2:{t.s2 || "–"}</span><span>F3:{t.s3 || "–"}</span><span>F4:{t.s4 || "–"}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: C.white, fontWeight: 700, fontSize: 15 }}>{t.name}</div>
+                {i < 3 && <div style={{ color: podiumColors[i], fontSize: 11, fontWeight: 600 }}>{podiumLabels[i]}</div>}
               </div>
-              <div style={{ color: i < 3 ? [C.green, C.blue, C.purple][i] : C.white, fontWeight: 900, fontSize: 22 }}>{t.total || "–"}</div>
+              <div style={{ display: "flex", gap: 10, fontSize: 12, color: C.grayMid }}>
+                <span>F2:{displayScore(calcScore(2, data.scores[`2_${t.id}`]))}</span>
+                <span>F3:{displayScore(calcScore(3, data.scores[`3_${t.id}`]))}</span>
+                <span>F4:{displayScore(calcScore(4, data.scores[`4_${t.id}`]))}</span>
+              </div>
+              <div style={{ color: i < 3 ? podiumColors[i] : C.white, fontWeight: 900, fontSize: 22, textShadow: i < 3 ? `0 0 8px ${podiumColors[i]}55` : "none" }}>{displayScore(t.total)}</div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* ── CUADRO DE HONOR ── */}
+      <div style={{ marginTop: 24, background: "linear-gradient(135deg, #1A1A2E 0%, #252550 100%)", borderRadius: 20, padding: "24px 20px", border: `2px solid ${C.purple}44` }}>
+        <div style={{ color: C.white, fontWeight: 900, fontSize: 20, marginBottom: 20, textAlign: "center" }}>🏆 Cuadro de Honor</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14 }}>
+          {/* Vehículo Más Veloz — automático */}
+          <div style={{ background: "#0474FD15", border: `2px solid ${C.blue}66`, borderRadius: 16, padding: "18px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 6 }}>🏎️</div>
+            <div style={{ color: C.blue, fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Vehículo Más Veloz</div>
+            <div style={{ color: C.grayMid, fontSize: 11, marginBottom: 10 }}>Fase 1 — Drag Race</div>
+            {fastest ? (
+              <>
+                <div style={{ color: C.white, fontWeight: 800, fontSize: 18 }}>{fastest.name}</div>
+                <div style={{ color: C.blue, fontWeight: 700, fontSize: 22, marginTop: 4 }}>{fastest.score}s</div>
+              </>
+            ) : (
+              <div style={{ color: C.grayMid, fontSize: 13 }}>Sin resultados aún</div>
+            )}
+          </div>
+
+          {/* Premio Maker — manual */}
+          <div style={{ background: "#FF550015", border: `2px solid ${C.orange}66`, borderRadius: 16, padding: "18px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 6 }}>🔧</div>
+            <div style={{ color: C.orange, fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Premio "Maker"</div>
+            <div style={{ color: C.grayMid, fontSize: 11, marginBottom: 10 }}>Diseño y Estructura</div>
+            {makerTeam ? (
+              <div style={{ color: C.white, fontWeight: 800, fontSize: 18 }}>{makerTeam.name}</div>
+            ) : (
+              <div style={{ color: C.grayMid, fontSize: 13 }}>Pendiente de asignación</div>
+            )}
+          </div>
+
+          {/* Premio Código Limpio — manual */}
+          <div style={{ background: "#84CD0515", border: `2px solid ${C.green}66`, borderRadius: 16, padding: "18px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 36, marginBottom: 6 }}>💻</div>
+            <div style={{ color: C.green, fontWeight: 800, fontSize: 14, marginBottom: 4 }}>Premio "Código Limpio"</div>
+            <div style={{ color: C.grayMid, fontSize: 11, marginBottom: 10 }}>Mejor Algoritmo</div>
+            {codigoTeam ? (
+              <div style={{ color: C.white, fontWeight: 800, fontSize: 18 }}>{codigoTeam.name}</div>
+            ) : (
+              <div style={{ color: C.grayMid, fontSize: 13 }}>Pendiente de asignación</div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -583,6 +673,8 @@ function DashboardLayout() {
   const [manageTeams, setManageTeams] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [premioMaker, setPremioMaker] = useState<number | null>(null);
+  const [premioCodigo, setPremioCodigo] = useState<number | null>(null);
 
   // load() — solo lee localStorage, instantáneo sin red
   const load = useCallback(() => {
@@ -665,6 +757,20 @@ function DashboardLayout() {
 
     return () => { supabase.removeChannel(channel); };
   }, [syncFromServer]);
+
+  // Cargar premios guardados (Admin)
+  useEffect(() => {
+    const fetchPremios = async () => {
+      try {
+        const { data: d } = await supabase.from('premios').select('*').eq('id', 1).single();
+        if (d) {
+          setPremioMaker(d.premio_maker_equipo_id);
+          setPremioCodigo(d.premio_codigo_equipo_id);
+        }
+      } catch (_) { }
+    };
+    fetchPremios();
+  }, []);
 
   // Exportación XLS (solo admin)
   const exportarXLS = useCallback(async () => {
@@ -1106,6 +1212,42 @@ function DashboardLayout() {
               <button onClick={async () => { await supabase.from('control_pantalla').update({ modo: 'leaderboard' }).eq('id', 1); }} style={{ fontSize: 11, background: C.purple, color: C.white, border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>🏆 Resultados</button>
             </div>
             <button id="btn-manage-teams" onClick={() => setManageTeams(!manageTeams)} style={{ fontSize: 12, background: C.blue, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>👥 Equipos</button>
+          </div>
+          {/* Asignación de Premios Manuales */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>🏆 Premios:</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <label style={{ fontSize: 11, color: C.textSub }}>🔧 Maker:</label>
+              <select
+                id="select-premio-maker"
+                value={premioMaker ?? ""}
+                onChange={async (e) => {
+                  const val = e.target.value ? Number(e.target.value) : null;
+                  setPremioMaker(val);
+                  await supabase.from('premios').upsert({ id: 1, premio_maker_equipo_id: val }, { onConflict: 'id' });
+                }}
+                style={{ fontSize: 11, borderRadius: 6, border: `1px solid ${C.orange}55`, padding: "3px 6px", background: C.white }}
+              >
+                <option value="">— Sin asignar —</option>
+                {data.teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <label style={{ fontSize: 11, color: C.textSub }}>💻 Código:</label>
+              <select
+                id="select-premio-codigo"
+                value={premioCodigo ?? ""}
+                onChange={async (e) => {
+                  const val = e.target.value ? Number(e.target.value) : null;
+                  setPremioCodigo(val);
+                  await supabase.from('premios').upsert({ id: 1, premio_codigo_equipo_id: val }, { onConflict: 'id' });
+                }}
+                style={{ fontSize: 11, borderRadius: 6, border: `1px solid ${C.green}55`, padding: "3px 6px", background: C.white }}
+              >
+                <option value="">— Sin asignar —</option>
+                {data.teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
             {[1, 2, 3, 4].map(p => (
               <button key={p} id={`btn-reset-f${p}`} onClick={() => { if (window.confirm(`¿Reiniciar Fase ${p}? Se borrarán todos los puntajes de F${p} en adelante.`)) resetPhase(p); }} style={{ fontSize: 12, background: C.orange, color: C.white, border: "none", borderRadius: 8, padding: "5px 12px", cursor: "pointer" }}>Reset F{p}</button>
             ))}
@@ -1255,19 +1397,19 @@ function DashboardLayout() {
               <div style={{ overflowX: "auto" }}>
                 <div style={{ minWidth: 400, paddingBottom: 8 }}>
                   {[...data.teams]
-                    .map(t => ({ ...t, s2: calcScore(2, data.scores[`2_${t.id}`]) || 0, s3: calcScore(3, data.scores[`3_${t.id}`]) || 0, s4: calcScore(4, data.scores[`4_${t.id}`]) || 0 }))
+                    .map(t => ({ ...t, s2: calcScore(2, data.scores[`2_${t.id}`]) ?? 0, s3: calcScore(3, data.scores[`3_${t.id}`]) ?? 0, s4: calcScore(4, data.scores[`4_${t.id}`]) ?? 0 }))
                     .map(t => ({ ...t, total: +(t.s2 + t.s3 + t.s4).toFixed(2) }))
                     .sort((a, b) => b.total - a.total)
                     .map((t, i) => (
-                      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.gray}` }}>
-                        <div style={{ width: 26, height: 26, borderRadius: 8, background: i < 3 ? [C.green, C.blue, C.purple][i] : C.gray, display: "flex", alignItems: "center", justifyContent: "center", color: i < 3 ? C.white : C.textSub, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</div>
-                        <div style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{t.name}</div>
+                      <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.gray}`, background: i < 3 ? `${["#FFD700", "#C0C0C0", "#CD7F32"][i]}10` : "transparent", borderRadius: i < 3 ? 8 : 0, paddingLeft: i < 3 ? 8 : 0, paddingRight: i < 3 ? 8 : 0 }}>
+                        <div style={{ width: 26, height: 26, borderRadius: 8, background: i < 3 ? ["#FFD700", "#C0C0C0", "#CD7F32"][i] : C.gray, display: "flex", alignItems: "center", justifyContent: "center", color: i < 3 ? C.white : C.textSub, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</div>
+                        <div style={{ flex: 1, fontWeight: i < 3 ? 800 : 600, fontSize: 13 }}>{t.name}</div>
                         <div style={{ display: "flex", gap: 8, fontSize: 12, color: C.textSub }}>
-                          <span style={{ color: PHASE_COLOR[2] }}>F2:{t.s2 || "–"}</span>
-                          <span style={{ color: PHASE_COLOR[3] }}>F3:{t.s3 || "–"}</span>
-                          <span style={{ color: PHASE_COLOR[4] }}>F4:{t.s4 || "–"}</span>
+                          <span style={{ color: PHASE_COLOR[2] }}>F2:{calcScore(2, data.scores[`2_${t.id}`]) != null ? calcScore(2, data.scores[`2_${t.id}`]) : "–"}</span>
+                          <span style={{ color: PHASE_COLOR[3] }}>F3:{calcScore(3, data.scores[`3_${t.id}`]) != null ? calcScore(3, data.scores[`3_${t.id}`]) : "–"}</span>
+                          <span style={{ color: PHASE_COLOR[4] }}>F4:{calcScore(4, data.scores[`4_${t.id}`]) != null ? calcScore(4, data.scores[`4_${t.id}`]) : "–"}</span>
                         </div>
-                        <div style={{ fontWeight: 800, fontSize: 16, color: C.dark, minWidth: 36, textAlign: "right" }}>{t.total || "–"}</div>
+                        <div style={{ fontWeight: 800, fontSize: 16, color: C.dark, minWidth: 36, textAlign: "right" }}>{t.total != null ? t.total : "–"}</div>
                       </div>
                     ))}
                 </div>

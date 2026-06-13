@@ -341,20 +341,16 @@ function useSupabaseAPI() {
 
   // ── Leer todos los puntajes ──────────────────────────────────────
   const fetchAllScores = useCallback(async () => {
-    try {
-      const { data, error: sbError } = await supabase.from("puntajes").select("*");
-      if (sbError) throw sbError;
-      return data || [];
-    } catch { return []; }
+    const { data, error: sbError } = await supabase.from("puntajes").select("*");
+    if (sbError) throw sbError;
+    return data || [];
   }, []);
 
   // ── Leer clasificados ────────────────────────────────────────────
   const fetchClasificados = useCallback(async () => {
-    try {
-      const { data, error: sbError } = await supabase.from("clasificados").select("*");
-      if (sbError) throw sbError;
-      return data || [];
-    } catch { return []; }
+    const { data, error: sbError } = await supabase.from("clasificados").select("*");
+    if (sbError) throw sbError;
+    return data || [];
   }, []);
 
   // ── Reintentar cola offline cada 15s ────────────────────────────
@@ -430,7 +426,7 @@ function getRankings(data: AppData, phase: number): RankingEntry[] {
 // ═══════════════════════════════════════════════════════════════════
 // LOGIN SCREEN
 // ═══════════════════════════════════════════════════════════════════
-function LoginScreen() {
+function LoginScreen({ onCancel }: { onCancel?: () => void }) {
   const { login, authLoading, authError } = useAuth();
   const [pin, setPin] = useState("");
   const [shake, setShake] = useState(false);
@@ -462,13 +458,13 @@ function LoginScreen() {
       <div style={{ color: C.white, fontWeight: 900, fontSize: 28, letterSpacing: 2, marginBottom: 4 }}>CORE 2026</div>
       <div style={{ color: C.grayMid, fontSize: 13, marginBottom: 32 }}>Sistema de Arbitraje</div>
 
-      {/* Botón espectador — PIN público 0000 */}
+      {/* Botón Volver al Leaderboard Público */}
       <button
         id="btn-espectador"
-        onClick={() => login("0000")}
+        onClick={() => { if (onCancel) onCancel(); else login("0000"); }}
         style={{ background: "transparent", border: `1.5px solid ${C.grayMid}44`, color: C.grayMid, borderRadius: 10, padding: "6px 18px", fontSize: 12, cursor: "pointer", marginBottom: 24 }}
       >
-        👁 Entrar como Espectador (Leaderboard)
+        👁 Volver al Leaderboard Público
       </button>
 
       <div style={{ background: "#252540", borderRadius: 20, padding: "2rem", width: "100%", maxWidth: 320 }}>
@@ -522,8 +518,8 @@ function LoginScreen() {
 // ═══════════════════════════════════════════════════════════════════
 // PUBLIC LEADERBOARD
 // ═══════════════════════════════════════════════════════════════════
-function PublicLeaderboard({ data }: { data: AppData }) {
-  const { logout } = useAuth();
+function PublicLeaderboard({ data, onShowLogin }: { data: AppData; onShowLogin?: () => void }) {
+  const { logout, user } = useAuth();
   const [modo, setModo] = useState<"leaderboard" | "video">("leaderboard");
   const [premios, setPremios] = useState<{ premio_maker_equipo_id: number | null; premio_codigo_equipo_id: number | null }>({ premio_maker_equipo_id: null, premio_codigo_equipo_id: null });
 
@@ -584,7 +580,11 @@ function PublicLeaderboard({ data }: { data: AppData }) {
     <div style={{ minHeight: "100vh", background: C.dark, fontFamily: "system-ui, sans-serif", padding: "1rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, paddingTop: 8 }}>
         <div style={{ color: C.white, fontWeight: 800, fontSize: 22 }}>🏆 Leaderboard CORE 2026</div>
-        <button onClick={logout} style={{ background: "transparent", border: `1px solid ${C.grayMid}55`, color: C.grayMid, borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer" }}>Salir</button>
+        {user ? (
+          <button onClick={logout} style={{ background: "transparent", border: `1px solid ${C.grayMid}55`, color: C.grayMid, borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer" }}>Salir</button>
+        ) : (
+          <button onClick={onShowLogin} style={{ background: "transparent", border: `1px solid ${C.purple}`, color: C.purple, borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontWeight: "bold" }}>🔑 Acceso Jueces</button>
+        )}
       </div>
       <div style={{ overflowX: "auto" }}>
         <div style={{ minWidth: 500, paddingBottom: "10px" }}>
@@ -665,7 +665,7 @@ function PublicLeaderboard({ data }: { data: AppData }) {
 // ═══════════════════════════════════════════════════════════════════
 // DASHBOARD LAYOUT — Juez / Admin
 // ═══════════════════════════════════════════════════════════════════
-function DashboardLayout() {
+function DashboardLayout({ onShowLogin }: { onShowLogin?: () => void }) {
   const { user, logout } = useAuth();
   const { submitScore, qualify: qualifyAPI, fetchAllScores, fetchClasificados, isLoading: apiLoading, error: apiError, setError: setApiError } = useSupabaseAPI();
   const [data, setData] = useState<AppData | null>(null);
@@ -700,6 +700,7 @@ function DashboardLayout() {
         fetchClasificados(),
         supabase.from("equipos").select("id, nombre"),
       ]);
+      if (equiposResp.error) throw equiposResp.error;
       const equiposRaw = equiposResp.data || [];
 
       setData(prev => {
@@ -733,18 +734,46 @@ function DashboardLayout() {
       });
     } catch (err) {
       console.warn("syncFromServer falló (modo offline):", err);
+      throw err;
     }
   }, [fetchAllScores, fetchClasificados]);
 
   // Carga inicial desde localStorage (inmediata)
   useEffect(() => { load(); }, [load]);
 
+  const syncFails = useRef(0);
+  const syncIntervalRef = useRef<any>(null);
+
   // Sync inicial + polling cada 5s con Supabase
   useEffect(() => {
-    syncFromServer();
-    const iv = setInterval(syncFromServer, 5000);
-    return () => clearInterval(iv);
-  }, [syncFromServer]);
+    const doSync = async () => {
+      if (syncFails.current >= 3) {
+        if (syncIntervalRef.current) {
+          clearInterval(syncIntervalRef.current);
+          syncIntervalRef.current = null;
+        }
+        setApiError("Modo Offline: Pausado por falta de internet. Clic en ↺ para reintentar.");
+        return;
+      }
+      try {
+        await syncFromServer();
+        syncFails.current = 0; // reset on success
+      } catch (err) {
+        syncFails.current += 1;
+      }
+    };
+
+    doSync();
+    syncIntervalRef.current = setInterval(doSync, 5000);
+    return () => { if (syncIntervalRef.current) clearInterval(syncIntervalRef.current); };
+  }, [syncFromServer, setApiError]);
+
+  const handleRefresh = async () => {
+    syncFails.current = 0;
+    setApiError(null);
+    load();
+    try { await syncFromServer(); } catch (e) { }
+  };
 
   // Realtime: actualizar en todos los dispositivos (equipos y puntajes)
   useEffect(() => {
@@ -1026,8 +1055,8 @@ function DashboardLayout() {
 
   if (!data) return null;
 
-  // Redirigir espectadores
-  if (user?.rol === "espectador") return <PublicLeaderboard data={data} />;
+  // Redirigir espectadores o usuarios no autenticados (ruta pública)
+  if (!user || user.rol === "espectador") return <PublicLeaderboard data={data} onShowLogin={onShowLogin} />;
 
   const isAdmin = user?.rol === "admin";
   const rankings = getRankings(data, phase);
@@ -1122,6 +1151,8 @@ function DashboardLayout() {
   const resetPhase = async (p: number) => {
     setIsProcessing(true);
     try {
+      // DESHABILITADO temporalmente para evitar 404
+      /*
       let updatePayload: any = {};
       if (p === 1) {
         updatePayload = { tiempo: null, total: 0 };
@@ -1135,16 +1166,18 @@ function DashboardLayout() {
 
       const { error } = await supabase.from('puntajes').update(updatePayload).eq('fase', p);
       if (error) throw error;
+      */
 
-      const ns = { ...data.scores };
+      const ns = { ...data!.scores };
       Object.keys(ns).filter(k => k.startsWith(`${p}_`)).forEach(k => delete ns[k]);
-      const nq = { ...data.qualified };
+      const nq = { ...data!.qualified };
       for (let i = p; i <= 4; i++) delete nq[`p${i + 1}`];
-      await persist({ ...data, scores: ns, qualified: nq });
-      syncFromServer();
+      await persist({ ...data!, scores: ns, qualified: nq });
+      // syncFromServer(); // Evitamos sync para no recuperar el estado viejo
+      alert(`Fase ${p} reseteada localmente. (Backup DB deshabilitado temporalmente)`);
     } catch (err) {
       console.error("Error al hacer reset en fase", p, err);
-      alert("Error: No se pudo conectar a la base de datos. Verifique su red.");
+      alert("Error local al resetear fase.");
     } finally {
       setIsProcessing(false);
     }
@@ -1195,7 +1228,7 @@ function DashboardLayout() {
           {(saveMsg || apiLoading) && <span style={{ fontSize: 11, color: saveMsg.startsWith("✓") ? C.green : C.orange }}>{apiLoading ? "📡 sync…" : saveMsg}</span>}
           {/* FIX #6: Admin panel — solo visible para usuarios con rol admin, sin re-pedir PIN */}
           {isAdmin && <button id="btn-admin-panel" onClick={() => { setAdminOpen(!adminOpen); }} style={{ background: "transparent", border: `1.5px solid ${C.grayMid}`, borderRadius: 8, padding: "4px 10px", color: C.grayMid, fontSize: 12, cursor: "pointer" }}>⚙ Admin</button>}
-          <button id="btn-refresh" onClick={load} style={{ background: "transparent", border: `1.5px solid ${C.grayMid}`, borderRadius: 8, padding: "4px 10px", color: C.grayMid, fontSize: 12, cursor: "pointer" }}>↺</button>
+          <button id="btn-refresh" onClick={handleRefresh} style={{ background: "transparent", border: `1.5px solid ${C.grayMid}`, borderRadius: 8, padding: "4px 10px", color: C.grayMid, fontSize: 12, cursor: "pointer" }}>↺</button>
           <button id="btn-logout" onClick={logout} style={{ background: "transparent", border: `1.5px solid ${C.orange}44`, borderRadius: 8, padding: "4px 10px", color: C.orange, fontSize: 12, cursor: "pointer" }}>Salir</button>
         </div>
       </div>
@@ -1266,9 +1299,10 @@ function DashboardLayout() {
 
               setIsProcessing(true);
               try {
-                // 1. Ejecutar la transacción global en la base de datos
-                const { error } = await supabase.rpc('reset_torneo_completo');
-                if (error) throw error;
+                // 1. Ejecutar la transacción global en la base de datos (DESHABILITADO PARA EVITAR 404)
+                // const { error } = await supabase.rpc('reset_torneo_completo');
+                // if (error) throw error;
+                console.warn("Llamada a reset_torneo_completo omitida por fallo 404.");
 
                 // 2. Limpiar la sesión del evaluador/usuario actual
                 localStorage.removeItem('evaluator_session');
@@ -1277,15 +1311,15 @@ function DashboardLayout() {
                 try { sessionStorage.removeItem('core2026_session'); } catch (_) { }
 
                 // 3. Forzar un refresco del estado local basado en la nueva realidad de la DB
-                await syncFromServer();
+                // await syncFromServer();
 
-                alert("Reset completado. El torneo ha sido reiniciado a 3 equipos.");
+                alert("Reset local completado. El torneo ha sido reiniciado.");
 
                 // 4. Recargar la página para expulsar estado fantasma en todas las vistas
                 window.location.reload();
               } catch (e) {
-                console.error("Error crítico durante el reset:", e);
-                alert("Error de conexión: No se pudo completar el reset global. Verifique su red.");
+                console.error("Error crítico durante el reset local:", e);
+                alert("Error local durante el reset.");
               } finally {
                 setIsProcessing(false);
               }
@@ -1636,6 +1670,8 @@ export default function App() {
 
 function AppRouter() {
   const { user } = useAuth();
-  if (!user) return <LoginScreen />;
-  return <DashboardLayout />;
+  const [wantsLogin, setWantsLogin] = useState(false);
+
+  if (!user && wantsLogin) return <LoginScreen onCancel={() => setWantsLogin(false)} />;
+  return <DashboardLayout onShowLogin={() => setWantsLogin(true)} />;
 }

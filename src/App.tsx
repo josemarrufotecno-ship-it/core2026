@@ -1263,8 +1263,12 @@ function DashboardLayout({ onShowLogin }: { onShowLogin?: () => void }) {
                 value={premioMaker ?? ""}
                 onChange={async (e) => {
                   const val = e.target.value ? Number(e.target.value) : null;
-                  setPremioMaker(val);
-                  await supabase.from('premios').upsert({ id: 1, premio_maker_equipo_id: val }, { onConflict: 'id' });
+                  const { error } = await supabase.from('premios').upsert({ id: 1, premio_maker_equipo_id: val }, { onConflict: 'id' });
+                  if (error) {
+                    alert("Error al actualizar: " + error.message);
+                  } else {
+                    setPremioMaker(val);
+                  }
                 }}
                 style={{ fontSize: 11, borderRadius: 6, border: `1px solid ${C.orange}55`, padding: "3px 6px", background: C.white }}
               >
@@ -1279,8 +1283,12 @@ function DashboardLayout({ onShowLogin }: { onShowLogin?: () => void }) {
                 value={premioCodigo ?? ""}
                 onChange={async (e) => {
                   const val = e.target.value ? Number(e.target.value) : null;
-                  setPremioCodigo(val);
-                  await supabase.from('premios').upsert({ id: 1, premio_codigo_equipo_id: val }, { onConflict: 'id' });
+                  const { error } = await supabase.from('premios').upsert({ id: 1, premio_codigo_equipo_id: val }, { onConflict: 'id' });
+                  if (error) {
+                    alert("Error al actualizar: " + error.message);
+                  } else {
+                    setPremioCodigo(val);
+                  }
                 }}
                 style={{ fontSize: 11, borderRadius: 6, border: `1px solid ${C.green}55`, padding: "3px 6px", background: C.white }}
               >

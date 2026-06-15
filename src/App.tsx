@@ -526,15 +526,22 @@ function PublicLeaderboard({ data, onShowLogin }: { data: AppData; onShowLogin?:
   useEffect(() => {
     const fetchModo = async () => {
       try {
-        const { data: d } = await supabase.from('control_pantalla').select('modo').eq('id', 1).single();
-        if (d) setModo(d.modo);
-      } catch (e) { }
+        const { data: d, error } = await supabase.from('control_pantalla').select('modo').eq('id', 1).maybeSingle();
+        if (!error && d) setModo(d.modo);
+      } catch (_) { /* ignorar errores de red silenciosamente */ }
     };
     const fetchPremios = async () => {
       try {
-        const { data: d } = await supabase.from('premios').select('*').eq('id', 1).single();
-        if (d) setPremios({ premio_maker_equipo_id: d.premio_maker_equipo_id, premio_codigo_equipo_id: d.premio_codigo_equipo_id });
-      } catch (e) { }
+        const { data: d, error } = await supabase.from('premios').select('*').eq('id', 1).maybeSingle();
+        // Si hay error HTTP (404, 406, etc.) simplemente ignoramos y mantenemos el estado actual
+        if (error) return;
+        if (d) {
+          setPremios({ premio_maker_equipo_id: d.premio_maker_equipo_id ?? null, premio_codigo_equipo_id: d.premio_codigo_equipo_id ?? null });
+        } else {
+          // Tabla vacía: resetear a estado por defecto sin error
+          setPremios({ premio_maker_equipo_id: null, premio_codigo_equipo_id: null });
+        }
+      } catch (_) { /* ignorar errores de red silenciosamente */ }
     };
     fetchModo();
     fetchPremios();
@@ -798,11 +805,16 @@ function DashboardLayout({ onShowLogin }: { onShowLogin?: () => void }) {
   useEffect(() => {
     const fetchPremios = async () => {
       try {
-        const { data: d } = await supabase.from('premios').select('*').eq('id', 1).single();
-        if (d) {
-          setPremioMaker(d.premio_maker_equipo_id);
-          setPremioCodigo(d.premio_codigo_equipo_id);
+        const { data: d, error } = await supabase.from('premios').select('*').eq('id', 1).maybeSingle();
+        if (!error && d) {
+          setPremioMaker(d.premio_maker_equipo_id ?? null);
+          setPremioCodigo(d.premio_codigo_equipo_id ?? null);
+        } else if (!error && !d) {
+          // No hay fila aún — estado por defecto limpio
+          setPremioMaker(null);
+          setPremioCodigo(null);
         }
+        // Si hay error, no tocamos el estado para no perder lo que ya se mostraba
       } catch (_) { }
     };
     fetchPremios();
@@ -1307,24 +1319,22 @@ function DashboardLayout({ onShowLogin }: { onShowLogin?: () => void }) {
 
               setIsProcessing(true);
               try {
-                // 1. Ejecutar la transacción global en la base de datos (DESHABILITADO PARA EVITAR 404)
-                // const { error } = await supabase.rpc('reset_torneo_completo');
-                // if (error) throw error;
+                // 1. RPC deshabilitado — se usa reset local únicamente
                 console.warn("Llamada a reset_torneo_completo omitida por fallo 404.");
 
-                // 2. Limpiar la sesión del evaluador/usuario actual
+                // 2. Limpiar SOLO los datos del torneo en localStorage
+                //    ⚠️ NO tocamos sessionStorage para no perder la sesión del juez
                 localStorage.removeItem('evaluator_session');
                 localStorage.removeItem('juez_activo');
                 localStorage.removeItem(STORAGE_KEY);
-                try { sessionStorage.removeItem('core2026_session'); } catch (_) { }
 
-                // 3. Forzar un refresco del estado local basado en la nueva realidad de la DB
-                // await syncFromServer();
+                // 3. Restaurar el estado local en memoria sin recargar la página
+                const freshData = defaultData();
+                setData(freshData);
+                setAdminOpen(false);
+                setView("dashboard");
 
-                alert("Reset local completado. El torneo ha sido reiniciado.");
-
-                // 4. Recargar la página para expulsar estado fantasma en todas las vistas
-                window.location.reload();
+                alert("Reset local completado. Los puntajes han sido borrados localmente.");
               } catch (e) {
                 console.error("Error crítico durante el reset local:", e);
                 alert("Error local durante el reset.");

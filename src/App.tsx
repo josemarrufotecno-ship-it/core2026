@@ -1319,25 +1319,30 @@ function DashboardLayout({ onShowLogin }: { onShowLogin?: () => void }) {
 
               setIsProcessing(true);
               try {
-                // 1. RPC deshabilitado — se usa reset local únicamente
-                console.warn("Llamada a reset_torneo_completo omitida por fallo 404.");
+                // 1. Ejecutar la función remota en Supabase (borra puntajes, clasificados y premios en la BD)
+                const { error: rpcError } = await supabase.rpc('reset_torneo_completo');
+                if (rpcError) throw rpcError;
 
-                // 2. Limpiar SOLO los datos del torneo en localStorage
+                // 2. Limpiar datos del torneo en localStorage
                 //    ⚠️ NO tocamos sessionStorage para no perder la sesión del juez
                 localStorage.removeItem('evaluator_session');
                 localStorage.removeItem('juez_activo');
                 localStorage.removeItem(STORAGE_KEY);
 
-                // 3. Restaurar el estado local en memoria sin recargar la página
+                // 3. Restaurar el estado React en memoria — pantalla en blanco instantáneamente
                 const freshData = defaultData();
                 setData(freshData);
-                setAdminOpen(false);
+                setPremioMaker(null);
+                setPremioCodigo(null);
+                setForm({});
+                setScoringId(null);
                 setView("dashboard");
+                setAdminOpen(false);
 
-                alert("Reset local completado. Los puntajes han sido borrados localmente.");
-              } catch (e) {
-                console.error("Error crítico durante el reset local:", e);
-                alert("Error local durante el reset.");
+                alert("✅ Torneo reiniciado correctamente. La base de datos y la pantalla han sido limpiadas.");
+              } catch (e: any) {
+                console.error("Error crítico durante el reset del torneo:", e);
+                alert("❌ Error al reiniciar: " + (e?.message || "Desconocido") + "\nVerifica que la función reset_torneo_completo exista en Supabase.");
               } finally {
                 setIsProcessing(false);
               }

@@ -578,7 +578,11 @@ function PublicLeaderboard({ data, onShowLogin }: { data: AppData; onShowLogin?:
   if (modo === "video") {
     return (
       <div style={{ background: C.dark, minHeight: "100vh", overflow: "hidden" }}>
-        <video src="/promo-tecno.mp4" autoPlay loop muted playsInline preload="auto" style={{ width: '100vw', height: '100vh', objectFit: 'cover' }}></video>
+        <video
+          src="https://rhdlqpbuaqwuefnmejke.supabase.co/storage/v1/object/public/publicidad/TECNO%20CLEVELAND.mp4"
+          autoPlay loop muted playsInline preload="auto"
+          style={{ width: '100vw', height: '100vh', objectFit: 'cover' }}
+        />
       </div>
     );
   }

@@ -577,12 +577,14 @@ function PublicLeaderboard({ data, onShowLogin }: { data: AppData; onShowLogin?:
 
   if (modo === "video") {
     return (
-      <div style={{ background: C.dark, minHeight: "100vh", overflow: "hidden" }}>
-        <video
-          src="https://rhdlqpbuaqwuefnmejke.supabase.co/storage/v1/object/public/publicidad/TECNO%20CLEVELAND.mp4"
-          autoPlay loop muted playsInline preload="auto"
-          style={{ width: '100vw', height: '100vh', objectFit: 'cover' }}
-        />
+      <div style={{ background: C.dark, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem", boxSizing: "border-box" }}>
+        <div style={{ width: "100%", maxWidth: 896, margin: "0 auto", borderRadius: 16, overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,.6)", aspectRatio: "16/9", position: "relative" }}>
+          <video
+            src="https://rhdlqpbuaqwuefnmejke.supabase.co/storage/v1/object/public/publicidad/TECNO%20CLEVELAND.mp4"
+            autoPlay loop muted playsInline preload="auto" controls
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          />
+        </div>
       </div>
     );
   }
@@ -1682,6 +1684,82 @@ function DashboardLayout({ onShowLogin }: { onShowLogin?: () => void }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// LOBBY SCREEN — Pantalla inicial (ruta raíz)
+// ═══════════════════════════════════════════════════════════════════
+function LobbyScreen({ onJudge, onLeaderboard }: { onJudge: () => void; onLeaderboard: () => void }) {
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: `radial-gradient(ellipse at 60% 30%, #2A1A4E 0%, ${C.dark} 70%)`,
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      padding: "2rem", fontFamily: "system-ui, sans-serif", boxSizing: "border-box",
+    }}>
+      {/* Logo / Brand */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 28 }}>
+        {[C.purple, C.blue, C.orange, C.green].map((c, i) => (
+          <div key={i} style={{ width: 26, height: 26, background: c, borderRadius: 7, boxShadow: `0 2px 12px ${c}88` }} />
+        ))}
+      </div>
+
+      <div style={{ color: C.white, fontWeight: 900, fontSize: 36, letterSpacing: 3, marginBottom: 6, textAlign: "center" }}>
+        CORE 2026
+      </div>
+      <div style={{
+        color: "transparent", background: `linear-gradient(90deg, ${C.purple}, ${C.blue})`,
+        WebkitBackgroundClip: "text", backgroundClip: "text",
+        fontWeight: 700, fontSize: 16, letterSpacing: 1, marginBottom: 56, textAlign: "center",
+      }}>
+        Competencia de Robótica
+      </div>
+
+      {/* Botones principales */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%", maxWidth: 360 }}>
+        <button
+          id="btn-lobby-juez"
+          onClick={onJudge}
+          style={{
+            background: `linear-gradient(135deg, ${C.purple}, ${C.blue})`,
+            border: "none", borderRadius: 18, padding: "20px 28px",
+            color: C.white, fontSize: 18, fontWeight: 800, cursor: "pointer",
+            boxShadow: `0 6px 28px ${C.purple}55`,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+            transition: "transform .15s, box-shadow .15s",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 10px 36px ${C.purple}77`; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = "none"; (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 6px 28px ${C.purple}55`; }}
+        >
+          <span style={{ fontSize: 24 }}>🔑</span>
+          Ingresar como Juez
+        </button>
+
+        <button
+          id="btn-lobby-leaderboard"
+          onClick={onLeaderboard}
+          style={{
+            background: "transparent",
+            border: `2px solid ${C.green}88`,
+            borderRadius: 18, padding: "20px 28px",
+            color: C.white, fontSize: 18, fontWeight: 800, cursor: "pointer",
+            boxShadow: `0 4px 20px ${C.green}22`,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+            transition: "transform .15s, border-color .15s, box-shadow .15s",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLButtonElement).style.borderColor = C.green; (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 8px 28px ${C.green}44`; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.transform = "none"; (e.currentTarget as HTMLButtonElement).style.borderColor = `${C.green}88`; (e.currentTarget as HTMLButtonElement).style.boxShadow = `0 4px 20px ${C.green}22`; }}
+        >
+          <span style={{ fontSize: 24 }}>📊</span>
+          Leaderboard Público
+        </button>
+      </div>
+
+      <div style={{ color: "#555577", fontSize: 12, marginTop: 52, letterSpacing: .5 }}>
+        Sistema de Arbitraje — TECNO Cleveland
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ROOT APP — Wraps everything in AuthProvider
 // ═══════════════════════════════════════════════════════════════════
 export default function App() {
@@ -1695,10 +1773,36 @@ export default function App() {
   );
 }
 
+type AppView = "lobby" | "login" | "leaderboard";
+
 function AppRouter() {
   const { user } = useAuth();
-  const [wantsLogin, setWantsLogin] = useState(false);
+  const [view, setView] = useState<AppView>("lobby");
 
-  if (!user && wantsLogin) return <LoginScreen onCancel={() => setWantsLogin(false)} />;
-  return <DashboardLayout onShowLogin={() => setWantsLogin(true)} />;
+  // Si el usuario ya tiene sesión activa (juez/admin), ir directo al dashboard
+  if (user && user.rol !== "espectador") {
+    return <DashboardLayout onShowLogin={() => setView("login")} />;
+  }
+
+  // Espectador autenticado → ir al leaderboard
+  if (user && user.rol === "espectador") {
+    return <DashboardLayout onShowLogin={() => setView("login")} />;
+  }
+
+  if (view === "login") {
+    return <LoginScreen onCancel={() => setView("lobby")} />;
+  }
+
+  if (view === "leaderboard") {
+    // Usamos DashboardLayout que ya redirige a PublicLeaderboard cuando no hay usuario
+    return <DashboardLayout onShowLogin={() => setView("login")} />;
+  }
+
+  // Vista por defecto: Lobby
+  return (
+    <LobbyScreen
+      onJudge={() => setView("login")}
+      onLeaderboard={() => setView("leaderboard")}
+    />
+  );
 }
